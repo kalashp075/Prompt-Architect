@@ -22,12 +22,23 @@ For example, if the user says "React frontend, Django backend, and
 PostgreSQL database", those are confirmed choices and must not appear in
 assumptions or unknowns.
 
+Also detect explicit deferrals, exclusions, and refusals. Phrases such as
+"not right now", "later", "defer this", "do not implement", "out of scope",
+"not needed", or "I will decide later" are intentional user decisions.
+Represent them as constraints or exclusions, and do not turn them into
+assumptions, unknowns, proposed defaults, or recommendations. For example,
+if the user says payment integration is not needed right now, preserve that
+as a current out-of-scope constraint; do not choose Stripe or ask the user to
+select a payment provider. The same rule applies to deployment, hosting,
+authentication, and any other technical decision.
+
 Only place a decision in assumptions when the raw input does not specify it
-and the system needs a provisional interpretation. An assumption must
-describe the provisional interpretation, not claim that an explicit user
-decision is unconfirmed. An unknown should be phrased as a high-value
-question only when the answer would materially change the implementation.
-Do not put missing decisions in requirements.
+and the system needs a provisional interpretation, unless the user has
+explicitly deferred or excluded that decision. An assumption must describe
+the provisional interpretation, not claim that an explicit user decision is
+unconfirmed. An unknown should be phrased as a high-value question only when
+the answer would materially change the implementation and the user has not
+already deferred the decision. Do not put missing decisions in requirements.
 
 Extract:
 - the concrete goal;
@@ -41,6 +52,9 @@ Before returning the JSON, compare every assumption and unknown against the
 raw input. Remove any item whose decision is explicitly stated by the user.
 Do not output assumptions such as "the backend stack is not confirmed" when
 the raw input names a backend stack.
+Remove any proposed provider, deployment model, or technical default that
+conflicts with an explicit deferral or exclusion. Preserve the deferral in
+constraints so the generation step can enforce it.
 
 Return only the requested structured JSON object.
 
@@ -84,9 +98,14 @@ Missing technical decisions:
 - When the specification contains an explicit assumption about a missing
   decision, turn it into a clearly labeled "Proposed default" or
   "Implementation assumption" in the prompt.
-- If no sensible default is present, include a concise "Decisions to confirm"
-  section with a practical recommended default and explain that it is
-  provisional. The implementation should still be concrete enough to begin.
+- If no explicit assumption or user decision is present, do not choose a
+  provider, deployment platform, hosting model, or other vendor-specific
+  technology merely to make the prompt more concrete. If implementation
+  cannot proceed without it, include a concise "Decisions to confirm"
+  section that names the unresolved decision without recommending a provider.
+  If the specification says the decision is deferred, excluded, or not
+  needed yet, preserve that wording as a current out-of-scope item and do not
+  include a "Decisions to confirm" item for it.
 - For an unspecified web application, use this provisional baseline unless it
   conflicts with the specification: React + Vite for the frontend, Django +
   Django REST Framework for the backend, PostgreSQL for persistence, and
@@ -94,6 +113,11 @@ Missing technical decisions:
   confirmed user requirement. For a design-only request, propose the
   appropriate design artifact and handoff format instead of inventing a
   backend.
+- Never introduce a payment provider, payment implementation, hosting
+  provider, Docker/Docker Compose setup, or deployment model unless it is
+  confirmed in the specification or explicitly listed as an assumption.
+  In particular, do not convert a deferred payment or deployment decision
+  into Stripe, Docker, or any other named default.
 - Never add unrelated features, generic filler, or unrequested best practices.
 
 The prompt should normally contain:
