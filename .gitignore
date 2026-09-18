@@ -1,7 +1,10 @@
 .env
-*.md
-backend/.env.example
-frontend/.env.example
+PRD.md
+architecture.md
+rules.md
+phases.md
+design.md
+DOCS.md
 .venv/
 __pycache__/
 *.py[cod]
