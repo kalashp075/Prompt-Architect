@@ -6,12 +6,17 @@ from google.genai import types
 from pydantic import ValidationError
 
 from .exceptions import LLMError, LLMRateLimitError
-from .schemas import AnalysisSpec, CustomRequirementMerge
+from .schemas import (
+    AnalysisSpec, ClarificationQuestion, CustomRequirementMerge,
+    UpdatedAnalysisSpec,
+)
 from .templates import (
     ANALYSIS_TEMPLATE,
+    ASSUMPTIONS_TEMPLATE,
     CATEGORY_FOCUS,
     GENERATION_TEMPLATE,
     MERGE_TEMPLATE,
+    QUESTION_TEMPLATE,
     STRICT_ANALYSIS_SUFFIX,
 )
 
@@ -83,6 +88,38 @@ class GeminiClient:
         except (json.JSONDecodeError, ValidationError, TypeError) as exc:
             raise LLMError(
                 "Something went wrong adding your custom requirements — please try again."
+            ) from exc
+
+    def next_question(self, raw_input, target_category, spec, history):
+        prompt = QUESTION_TEMPLATE.format(
+            raw_input=raw_input,
+            target_category=target_category,
+            spec=json.dumps(spec, ensure_ascii=False),
+            history=json.dumps(history, ensure_ascii=False),
+        )
+        try:
+            return ClarificationQuestion.model_validate(
+                json.loads(self._generate(prompt, schema=ClarificationQuestion))
+            )
+        except (json.JSONDecodeError, ValidationError, TypeError) as exc:
+            raise LLMError(
+                "Something went wrong generating the next clarification question — please try again."
+            ) from exc
+
+    def generate_assumptions(self, raw_input, target_category, spec, history):
+        prompt = ASSUMPTIONS_TEMPLATE.format(
+            raw_input=raw_input,
+            target_category=target_category,
+            spec=json.dumps(spec, ensure_ascii=False),
+            history=json.dumps(history, ensure_ascii=False),
+        )
+        try:
+            return UpdatedAnalysisSpec.model_validate(
+                json.loads(self._generate(prompt, schema=UpdatedAnalysisSpec))
+            )
+        except (json.JSONDecodeError, ValidationError, TypeError) as exc:
+            raise LLMError(
+                "Something went wrong filling in the remaining assumptions — please try again."
             ) from exc
 
     def generate(self, spec, target_category):

@@ -48,6 +48,12 @@ Extract:
 - assumptions that need to be made explicit;
 - at most four high-value unknowns, ranked 1 (highest) to 5.
 
+Every direct choice explicitly stated by the user must be retained as a
+confirmed requirement, preference, or constraint. This includes named
+frontend/backend frameworks, databases, authentication methods, payment
+providers, hosting, and deployment choices. Every explicit deferral must be
+retained as a constraint or exclusion.
+
 Before returning the JSON, compare every assumption and unknown against the
 raw input. Remove any item whose decision is explicitly stated by the user.
 Do not output assumptions such as "the backend stack is not confirmed" when
@@ -66,6 +72,70 @@ STRICT_ANALYSIS_SUFFIX = """
 Your previous response was invalid. Return only valid JSON matching every
 required field and type. Use [] when a list has no items. Do not use markdown
 fences.
+"""
+
+QUESTION_TEMPLATE = """
+You are selecting the next clarification question for Prompt Architect.
+Ask exactly one concise, high-value question that materially improves the
+implementation prompt for the target category: {target_category}.
+
+The user has already provided the raw idea and may have answered or skipped
+earlier questions. Do not repeat a question. Do not ask about a decision the
+user explicitly deferred or excluded. Do not ask for information already
+present in the specification or clarification history. The question should
+be answerable in one or two sentences.
+
+RAW IDEA:
+{raw_input}
+
+CURRENT SPECIFICATION:
+{spec}
+
+CLARIFICATION HISTORY:
+{history}
+
+Return only JSON with one field: question.
+"""
+
+ASSUMPTIONS_TEMPLATE = """
+Complete the Prompt Architect specification using the user's clarification
+history. Return the full updated specification, not commentary.
+
+Precedence:
+1. Explicit user constraints, exclusions, and deferrals.
+2. Direct user answers.
+3. Clearly implied information from the raw idea.
+4. Reasonable AI assumptions for remaining gaps.
+5. Unknowns only when a decision cannot be safely assumed.
+
+Answers with provenance `confirmed` are user decisions and must be reflected
+in the resulting confirmed specification. Answers marked `skipped` are not
+confirmed requirements. Use them to understand what remains unresolved, but
+do not invent an answer that conflicts with an explicit deferral. Never
+choose a payment provider, hosting provider,
+deployment model, or other vendor-specific technology unless the user
+confirmed it or it already exists as an assumption in the specification.
+Preserve explicit "later", "not now", "deferred", and "out of scope"
+decisions in constraints. Do not include more than four unknowns.
+
+For each assumption, include the assumption text in `assumptions` and record
+matching provenance in `assumption_provenance` as an object with `text` and
+`source`. Use `ai_assumption` for assumptions introduced while completing the
+specification. Do not label direct user answers as assumptions.
+
+RAW IDEA:
+{raw_input}
+
+TARGET CATEGORY:
+{target_category}
+
+CURRENT SPECIFICATION:
+{spec}
+
+CLARIFICATION HISTORY:
+{history}
+
+Return only JSON matching the required specification schema.
 """
 
 MERGE_TEMPLATE = """
@@ -93,6 +163,18 @@ conditions define completion. Do not return a short requirements summary.
 The confirmed specification is the contract. Do not use or recover anything
 from the original raw input that is absent from the specification.
 
+Interpret clarification history using its provenance:
+- `confirmed` answers are explicit user decisions and may inform confirmed
+  requirements, preferences, or constraints.
+- `skipped` answers are unresolved and must never be presented as confirmed.
+- Items under `assumptions` are provisional AI decisions and must remain
+  visibly labeled as assumptions in the final prompt.
+- `assumption_provenance` identifies whether an assumption came from initial
+  analysis (`ai_analysis`) or was introduced after clarification
+  (`ai_assumption`). Preserve that distinction when presenting assumptions.
+- Confirmed answers must not be moved into assumptions. Skipped answers must
+  not be described as confirmed requirements.
+
 Missing technical decisions:
 - Do not silently present an invented choice as user-approved.
 - When the specification contains an explicit assumption about a missing
@@ -118,6 +200,9 @@ Missing technical decisions:
   confirmed in the specification or explicitly listed as an assumption.
   In particular, do not convert a deferred payment or deployment decision
   into Stripe, Docker, or any other named default.
+- Treat explicit authentication and stack choices exactly like payment and
+  deployment choices: preserve named choices as confirmed, and preserve
+  explicit deferrals without selecting replacements.
 - Never add unrelated features, generic filler, or unrequested best practices.
 
 The prompt should normally contain:

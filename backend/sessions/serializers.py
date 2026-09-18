@@ -8,7 +8,8 @@ class SpecificationSerializer(serializers.ModelSerializer):
         model = Specification
         fields = (
             "goal", "requirements", "preferences", "constraints",
-            "assumptions", "unknowns", "answers", "custom_requirements",
+            "assumptions", "assumption_provenance", "unknowns", "answers",
+            "custom_requirements",
         )
 
 
@@ -26,7 +27,8 @@ class PromptSessionSerializer(serializers.ModelSerializer):
         model = PromptSession
         fields = (
             "id", "raw_input", "target_category", "status", "created_at",
-            "updated_at", "specification", "generated_prompt",
+            "updated_at", "question_limit", "question_count", "current_question",
+            "assumptions_requested", "specification", "generated_prompt",
         )
 
 
@@ -39,6 +41,11 @@ class AnswersSerializer(serializers.ListSerializer):
     child = serializers.DictField()
 
 
+class QuestionAnswerSerializer(serializers.Serializer):
+    answer = serializers.CharField(required=False, allow_blank=True)
+    skipped = serializers.BooleanField(default=False)
+
+
 class CustomRequirementsSerializer(serializers.Serializer):
     custom_requirements = serializers.CharField(allow_blank=True, max_length=4000)
 
@@ -49,6 +56,9 @@ class SpecificationUpdateSerializer(serializers.Serializer):
     preferences = serializers.ListField(child=serializers.CharField())
     constraints = serializers.ListField(child=serializers.CharField())
     assumptions = serializers.ListField(child=serializers.CharField())
+    assumption_provenance = serializers.ListField(
+        child=serializers.DictField(), required=False, default=list
+    )
     unknowns = serializers.ListField(child=serializers.DictField())
     answers = serializers.ListField(child=serializers.DictField())
     custom_requirements = serializers.CharField(allow_blank=True)

@@ -195,9 +195,62 @@ function InputScreen({ onCreated }) {
 }
 
 function QuestionsScreen({ session, onDone, onBack }) {
-  const [answers, setAnswers] = useState(session.specification.unknowns.map(({ question }) => ({ question, answer: "" })));
-  const mutation = useMutation({ mutationFn: (data) => request(`/api/sessions/${session.id}/answers/`, { method: "PATCH", body: JSON.stringify(data.map((item) => ({ ...item, answer: item.answer.trim() }))) }), onSuccess: onDone });
-  return <div className="flow-container narrow-flow"><WizardProgress current={1} /><StepHeader eyebrow="A little more context" title="Help us get it right." subtitle="These details help shape a prompt that feels like yours. Skip anything you haven't decided yet." /><form onSubmit={(event) => { event.preventDefault(); mutation.mutate(answers); }} className="question-list">{answers.map((item, index) => <label key={item.question} className="question-card"><span className="question-number">{index + 1}.</span><span className="question-copy"><strong>{item.question}</strong><input value={item.answer} onChange={(event) => setAnswers(answers.map((answer, i) => i === index ? { ...answer, answer: event.target.value } : answer))} placeholder="Type an answer, or leave blank to skip" /></span></label>)}<div className="form-footer"><BackButton onClick={onBack} disabled={mutation.isPending} /><button disabled={mutation.isPending} className="button button-dark">{mutation.isPending ? <Spinner label="Saving..." /> : <>Continue <Icon name="arrow" size={16} /></>}</button></div><ErrorMessage error={mutation.error} onRetry={() => mutation.mutate(mutation.variables)} /></form></div>;
+  const [answer, setAnswer] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  useEffect(() => {
+    setAnswer("");
+  }, [session.current_question]);
+  const answerMutation = useMutation({
+    mutationFn: (body) => request(`/api/sessions/${session.id}/question-answer/`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+    onSuccess: onDone,
+  });
+  const assumptionsMutation = useMutation({
+    mutationFn: () => request(`/api/sessions/${session.id}/assumptions/`, { method: "POST" }),
+    onSuccess: onDone,
+  });
+  const isPending = answerMutation.isPending || assumptionsMutation.isPending;
+  const history = session.specification.answers || [];
+  const submitAnswer = (event, skipped = false) => {
+    event?.preventDefault();
+    answerMutation.mutate(skipped ? { skipped: true } : { answer: answer.trim() });
+  };
+  return (
+    <div className="flow-container narrow-flow">
+      <WizardProgress current={1} />
+      <StepHeader
+        eyebrow="A little more context"
+        title="Help us get it right."
+        subtitle={`We’ll ask up to ${session.question_limit} focused questions to understand your intent. Answer what you can, skip anything undecided, or let us make assumptions for the rest.`}
+      />
+      {history.length ? (
+        <div className="question-history">
+          <button type="button" className="history-toggle" onClick={() => setHistoryOpen((open) => !open)} aria-expanded={historyOpen}>
+            <span>Previous answers <span className="history-count">{history.length}</span></span>
+            <Icon name="chevron" size={16} />
+          </button>
+          {historyOpen ? <div className="history-answers">{history.map((item, index) => <div key={`${item.question}-${index}`} className="history-answer"><span className="history-check">{item.skipped ? "—" : "✓"}</span><div><strong>{item.question}</strong><span>{item.skipped ? "Skipped for now" : item.answer}</span><small>{item.skipped ? "Unresolved" : "Confirmed by you"}</small></div></div>)}</div> : null}
+        </div>
+      ) : null}
+      <form onSubmit={submitAnswer} className="question-list">
+        <div className="question-card active-question">
+          <div className="question-meta"><span>Question {session.question_count + 1} of up to {session.question_limit}</span><span>{Math.round((session.question_count / session.question_limit) * 100)}% complete</span></div>
+          <div className="question-copy"><span className="question-number">{session.question_count + 1}.</span><strong>{session.current_question}</strong><textarea value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type your answer here..." rows={4} autoFocus /></div>
+        </div>
+        <div className="question-actions">
+          <BackButton onClick={onBack} disabled={isPending} />
+          <div className="question-secondary-actions">
+            <button type="button" className="text-action" onClick={(event) => submitAnswer(event, true)} disabled={isPending}>Skip for now</button>
+            <button type="button" className="assumption-action" onClick={() => assumptionsMutation.mutate()} disabled={isPending}>Make assumptions</button>
+          </div>
+          <button disabled={isPending || !answer.trim()} className="button button-dark">{answerMutation.isPending ? <Spinner label="Saving..." /> : <>Continue <Icon name="arrow" size={16} /></>}</button>
+        </div>
+        <ErrorMessage error={answerMutation.error || assumptionsMutation.error} onRetry={() => (answerMutation.error ? answerMutation.mutate(answer.trim() ? { answer: answer.trim() } : { skipped: true }) : assumptionsMutation.mutate())} />
+      </form>
+    </div>
+  );
 }
 
 function CustomRequirementsScreen({ session, onDone, onBack }) {
@@ -209,9 +262,11 @@ function CustomRequirementsScreen({ session, onDone, onBack }) {
 
 function ReviewScreen({ session, onDone, onBack, onReset, generationMutation }) {
   const [spec, setSpec] = useState(session.specification);
+  const [confirmedOpen, setConfirmedOpen] = useState(false);
   const mutation = useMutation({ mutationFn: () => request(`/api/sessions/${session.id}/spec/`, { method: "PATCH", body: JSON.stringify(spec) }), onSuccess: onDone });
-  const updateList = (field, index, value) => setSpec({ ...spec, [field]: spec[field].map((item, i) => i === index ? value : item) });
-  return <div className="flow-container review-flow"><WizardProgress current={3} /><StepHeader eyebrow="Final check" title="Make it yours." subtitle="Review the direction below. You have the final say before we write your prompt." /><form onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }} className="review-form"><section className="review-goal"><span className="field-heading">Goal</span><p className="goal-value">{spec.goal}</p></section><div className="spec-grid">{listFields.map((field) => <fieldset key={field} className="spec-card"><div className="spec-card-heading"><span>{field}</span><span className="spec-count">{spec[field].length}</span></div>{spec[field].length ? spec[field].map((item, index) => <div key={`${field}-${index}`} className="spec-item"><input className={item === "" ? "new-spec-input" : ""} value={item} placeholder="Add an item..." onChange={(event) => updateList(field, index, event.target.value)} /><button type="button" onClick={() => setSpec({ ...spec, [field]: spec[field].filter((_, i) => i !== index) })} aria-label={`Remove ${field} item`}>×</button></div>) : <p className="spec-empty">No {field} specified yet.</p>}<button type="button" onClick={() => setSpec({ ...spec, [field]: [...spec[field], ""] })} className="add-item"><Icon name="plus" size={14} /> Add item</button></fieldset>)}</div><fieldset className="answers-card"><div className="answers-heading"><span>Answers & context</span><span className="spec-count">{spec.answers.filter((item) => item.answer?.trim()).length} of {spec.answers.length} specified</span><span className="answers-context-label">Scoping prompts</span></div>{spec.answers.length ? spec.answers.map((item, index) => <div key={item.question} className="answer-row"><div><strong>{item.question}</strong><input className="answer-input" value={item.answer || ""} onChange={(event) => setSpec({ ...spec, answers: spec.answers.map((answer, answerIndex) => answerIndex === index ? { ...answer, answer: event.target.value } : answer) })} placeholder="Skipped — click to provide an answer" /></div></div>) : <p className="muted-copy">No additional answers were added.</p>}</fieldset><div className="form-footer"><div className="review-actions-left"><BackButton onClick={onBack} disabled={mutation.isPending || generationMutation.isPending} /><button type="button" className="review-start-over" onClick={onReset} disabled={mutation.isPending || generationMutation.isPending}>Start over</button></div><span className="privacy-note">You can edit everything except the original goal.</span><button disabled={mutation.isPending || generationMutation.isPending} className="button button-dark">{mutation.isPending ? <Spinner label="Saving..." /> : generationMutation.isPending ? <Spinner label="Writing your prompt..." /> : <>Generate prompt <Icon name="arrow" size={16} /> </>}</button></div><ErrorMessage error={mutation.error} onRetry={() => mutation.mutate()} /><ErrorMessage error={generationMutation.error} onRetry={() => generationMutation.mutate()} /></form></div>;
+  const updateList = (field, index, value) => setSpec((current) => ({ ...current, [field]: current[field].map((item, i) => i === index ? value : item), ...(field === "assumptions" ? { assumption_provenance: (current.assumption_provenance || []).map((item, i) => i === index ? { ...item, text: value } : item) } : {}) }));
+  const removeListItem = (field, index) => setSpec((current) => ({ ...current, [field]: current[field].filter((_, i) => i !== index), ...(field === "assumptions" ? { assumption_provenance: (current.assumption_provenance || []).filter((_, i) => i !== index) } : {}) }));
+  return <div className="flow-container review-flow"><WizardProgress current={3} /><StepHeader eyebrow="Final check" title="Make it yours." subtitle="Review the direction below. You have the final say before we write your prompt." /><form onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }} className="review-form"><section className="review-goal"><span className="field-heading">Goal</span><p className="goal-value">{spec.goal}</p></section><div className="review-section-label">AI interpretation <span>Editable structure inferred from your idea and answers</span></div><div className="spec-grid">{listFields.map((field) => <fieldset key={field} className="spec-card"><div className="spec-card-heading"><span>{field === "assumptions" ? "Assumptions to review" : field}</span>{field === "assumptions" ? <span className="provenance-badge">AI-generated</span> : null}<span className="spec-count">{spec[field].length}</span></div>{spec[field].length ? spec[field].map((item, index) => <div key={`${field}-${index}`} className="spec-item"><div className="spec-item-content"><input className={item === "" ? "new-spec-input" : ""} value={item} placeholder="Add an item..." onChange={(event) => updateList(field, index, event.target.value)} />{field === "assumptions" ? <span className="item-provenance">{spec.assumption_provenance?.[index]?.source === "ai_analysis" ? "From initial analysis" : spec.assumption_provenance?.[index]?.source === "user_added" ? "Added by you" : "Added after clarification"}</span> : null}</div><button type="button" onClick={() => removeListItem(field, index)} aria-label={`Remove ${field} item`}>×</button></div>) : <p className="spec-empty">No {field} specified yet.</p>}<button type="button" onClick={() => setSpec({ ...spec, [field]: [...spec[field], ""], assumption_provenance: field === "assumptions" ? [...(spec.assumption_provenance || []), { text: "", source: "user_added" }] : spec.assumption_provenance })} className="add-item"><Icon name="plus" size={14} /> Add item</button></fieldset>)}</div><fieldset className="answers-card confirmed-card"><button type="button" className="confirmed-heading" onClick={() => setConfirmedOpen((open) => !open)} aria-expanded={confirmedOpen}><span><strong>Confirmed decisions</strong><small>{spec.answers.filter((item) => item.answer?.trim()).length} confirmed · {spec.answers.filter((item) => item.skipped).length} skipped</small></span><Icon name="chevron" size={16} /></button>{confirmedOpen ? <div className="confirmed-list">{spec.answers.length ? spec.answers.map((item, index) => <div key={item.question} className="answer-row"><div><strong>{item.question}</strong><span className={item.skipped ? "answer-provenance skipped" : "answer-provenance"}>{item.skipped ? "Skipped — unresolved" : "Confirmed by you"}</span><input className="answer-input" value={item.answer || ""} onChange={(event) => setSpec({ ...spec, answers: spec.answers.map((answer, answerIndex) => answerIndex === index ? { ...answer, answer: event.target.value, skipped: false, provenance: "confirmed" } : answer) })} placeholder="Skipped — click to provide an answer" /></div></div>) : <p className="muted-copy">No clarification decisions yet.</p>}</div> : null}</fieldset><div className="form-footer"><div className="review-actions-left"><BackButton onClick={onBack} disabled={mutation.isPending || generationMutation.isPending} /><button type="button" className="review-start-over" onClick={onReset} disabled={mutation.isPending || generationMutation.isPending}>Start over</button></div><span className="privacy-note">You can edit everything except the original goal.</span><button disabled={mutation.isPending || generationMutation.isPending} className="button button-dark">{mutation.isPending ? <Spinner label="Saving..." /> : generationMutation.isPending ? <Spinner label="Writing your prompt..." /> : <>Generate prompt <Icon name="arrow" size={16} /> </>}</button></div><ErrorMessage error={mutation.error} onRetry={() => mutation.mutate()} /><ErrorMessage error={generationMutation.error} onRetry={() => generationMutation.mutate()} /></form></div>;
 }
 
 function ResultScreen({ session, onBack, onReset }) {
@@ -234,6 +289,7 @@ function SessionFlow({ sessionId, onReset }) {
   if (session.status === "ready_for_review") return <ReviewScreen session={session} onDone={() => generate.mutate()} onBack={() => goBack.mutate()} onReset={onReset} generationMutation={generate} />;
   if (session.status === "complete") return <ResultScreen session={session} onBack={() => goBack.mutate()} onReset={onReset} />;
   if (session.status === "analyzing") return <LoadingState label="Analyzing your idea..." detail="Finding the right structure and asking only what matters." />;
+  if (session.status === "generating_assumptions") return <LoadingState label="Filling in the remaining details..." detail="Using your answers first, then making only the assumptions you can review." />;
   if (session.status === "generating") return <LoadingState label="Writing your prompt..." detail="Turning your confirmed direction into something you can use." />;
   return <div className="state-card"><ErrorMessage error={generate.error || new Error("This session needs attention.")} onRetry={() => generate.mutate()} /><button onClick={onReset} className="start-another">Start over</button></div>;
 }
