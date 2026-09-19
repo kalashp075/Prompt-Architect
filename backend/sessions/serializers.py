@@ -40,9 +40,18 @@ class CreateSessionSerializer(serializers.Serializer):
 class AnswersSerializer(serializers.ListSerializer):
     child = serializers.DictField()
 
+    def validate(self, data):
+        if len(data) > 20:
+            raise serializers.ValidationError("At most 20 answers are allowed.")
+        for item in data:
+            for key in ("question", "answer"):
+                if key in item and (not isinstance(item[key], str) or len(item[key]) > 2000):
+                    raise serializers.ValidationError(f"{key} is too long.")
+        return data
+
 
 class QuestionAnswerSerializer(serializers.Serializer):
-    answer = serializers.CharField(required=False, allow_blank=True)
+    answer = serializers.CharField(required=False, allow_blank=True, max_length=2000)
     skipped = serializers.BooleanField(default=False)
 
 
@@ -51,14 +60,14 @@ class CustomRequirementsSerializer(serializers.Serializer):
 
 
 class SpecificationUpdateSerializer(serializers.Serializer):
-    goal = serializers.CharField()
-    requirements = serializers.ListField(child=serializers.CharField())
-    preferences = serializers.ListField(child=serializers.CharField())
-    constraints = serializers.ListField(child=serializers.CharField())
-    assumptions = serializers.ListField(child=serializers.CharField())
+    goal = serializers.CharField(max_length=4000)
+    requirements = serializers.ListField(child=serializers.CharField(max_length=1000), max_length=50)
+    preferences = serializers.ListField(child=serializers.CharField(max_length=1000), max_length=50)
+    constraints = serializers.ListField(child=serializers.CharField(max_length=1000), max_length=50)
+    assumptions = serializers.ListField(child=serializers.CharField(max_length=1000), max_length=50)
     assumption_provenance = serializers.ListField(
         child=serializers.DictField(), required=False, default=list
     )
-    unknowns = serializers.ListField(child=serializers.DictField())
-    answers = serializers.ListField(child=serializers.DictField())
-    custom_requirements = serializers.CharField(allow_blank=True)
+    unknowns = serializers.ListField(child=serializers.DictField(), max_length=20)
+    answers = serializers.ListField(child=serializers.DictField(), max_length=20)
+    custom_requirements = serializers.CharField(allow_blank=True, max_length=4000)

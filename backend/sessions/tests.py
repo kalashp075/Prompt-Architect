@@ -7,9 +7,27 @@ from llm.schemas import AnalysisSpec, ClarificationQuestion
 
 from .models import PromptSession, Specification
 from .views import QUESTION_LIMITS
+from .serializers import CreateSessionSerializer
 
 
 class AdaptiveClarificationTests(TestCase):
+    def test_anonymous_session_requires_possession_token(self):
+        session = PromptSession.objects.create(
+            raw_input="Build a web app for a small team.",
+            target_category=PromptSession.TargetCategory.FRONTEND,
+            status=PromptSession.Status.AWAITING_ANSWERS,
+            possession_token_hash="not-the-token",
+        )
+        response = self.client.get(f"/api/sessions/{session.id}/")
+        self.assertEqual(response.status_code, 404)
+
+    def test_raw_input_has_a_bounded_length(self):
+        serializer = CreateSessionSerializer(data={
+            "raw_input": "x" * 4001,
+            "target_category": "general",
+        })
+        self.assertFalse(serializer.is_valid())
+
     def test_fullstack_uses_ten_question_cap(self):
         self.assertEqual(QUESTION_LIMITS[PromptSession.TargetCategory.FULLSTACK], 10)
 

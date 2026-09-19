@@ -242,6 +242,7 @@ textarea:focus, input:focus { border-color: #94a3b8; box-shadow: 0 0 0 3px rgba(
 .auth-card .button { margin-top: 23px; }
 .auth-switch { margin: 22px 0 0; color: #94a3b8; text-align: center; font-size: 12px; }.auth-switch a { color: #c2410c; font-weight: 700; }
 .placeholder-page { max-width: 680px; margin: 8vh auto; text-align: center; animation: rise .45s ease both; }.placeholder-page h1 { margin: 18px 0 12px; color: #0f172a; font-family: "Plus Jakarta Sans", sans-serif; font-size: clamp(34px, 5vw, 52px); letter-spacing: -.05em; }.placeholder-page p { margin: 0 auto 26px; color: #64748b; font-size: 16px; }
+.info-page { text-align: left; }.info-page > .eyebrow, .info-page > h1, .info-page > p, .info-page > .button { display: block; }.info-page > .eyebrow, .info-page > h1, .info-page > p { text-align: center; }.info-page section { margin: 28px 0; padding: 22px; border: 1px solid #e2e8f0; border-radius: 14px; background: rgba(255,255,255,.72); }.info-page section h2 { margin: 0 0 8px; color: #1e293b; font-size: 16px; }.info-page section p { margin: 0; font-size: 14px; line-height: 1.7; }.info-page > .button { width: fit-content; margin: 30px auto 0; }
 .notice { padding: 10px; color: #b45309; background: #fffbeb; border-radius: 8px; font-size: 12px; }
 .icon-button { display: inline-grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 9px; color: #64748b; background: transparent; }
 .icon-button:hover { background: #f1f5f9; }.mobile-only { display: none; }

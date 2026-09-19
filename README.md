@@ -33,8 +33,8 @@ cp .env.example .env
 ```
 
 Set `DATABASE_URL` in `backend/.env` to your Supabase Postgres connection
-string. For a local smoke test without Supabase, the project falls back to
-SQLite; deployed environments should always provide `DATABASE_URL`.
+string. Production startup requires this variable; SQLite is intended only
+for local development.
 
 Set `GEMINI_MODEL` to an available Flash-tier model from Google AI Studio.
 The model is read only from the environment; restart Django after changing
@@ -48,6 +48,13 @@ python manage.py runserver
 ```
 
 The API health check is available at `http://localhost:8000/api/health/`.
+
+Anonymous sessions are protected by a one-time `session_token` returned when
+creating a session. Clients must send it as `X-Session-Token` on subsequent
+requests; authenticated sessions continue to use the Supabase bearer token.
+Production deployments must provide `DATABASE_URL`, a 32+ character
+`DJANGO_SECRET_KEY`, `SUPABASE_JWT_ISSUER`, a JWKS/URL setting, and
+`SECURE_PROXY_SSL_HEADER=https`.
 
 ### Frontend
 
@@ -97,7 +104,44 @@ that user. Restart both development servers after changing environment files.
 - Supabase email confirmation may be enabled by default for new projects.
   Confirm the signup email or disable confirmation temporarily for local QA.
 - The frontend production bundle may emit a non-blocking Vite chunk-size
-  warning because Supabase Auth is included in the browser bundle.
+  warning because Supabase Auth is included in the browser bundle. Vendor
+  chunks are split during the production build.
+
+  ## Production checklist
+
+  Before deploying:
+
+  1. Set `DJANGO_DEBUG=false`, a long random `DJANGO_SECRET_KEY`, a production
+     `DATABASE_URL`, exact `ALLOWED_HOSTS`, exact `CORS_ALLOWED_ORIGINS`, and
+     `SUPABASE_JWT_ISSUER`.
+  2. Set `DJANGO_SECURE_SSL_REDIRECT=true` and terminate TLS at the platform or
+     a trusted reverse proxy. If the proxy forwards `X-Forwarded-Proto`, set
+     `SECURE_PROXY_SSL_HEADER` in the deployment environment as required by
+     that platform.
+  3. Run `python manage.py check --deploy` and
+     `python manage.py migrate` during the release process. Serve Django with a
+     production WSGI/ASGI server, not `runserver`.
+  4. Configure Supabase backups and verify Row Level Security policies for any
+     tables exposed through Supabase APIs. Django ownership checks remain
+     required even when RLS is enabled.
+  5. Keep Gemini credentials server-side. Set an available Flash-tier
+     `GEMINI_MODEL`, review the configured request limits, and monitor latency,
+     errors, token usage, and provider quota.
+  6. Run dependency checks before release:
+
+     ```bash
+     npm audit --audit-level=high
+     pip-audit -r backend/requirements.txt
+     ```
+
+  7. Publish a privacy notice that explains session retention and that prompt
+     content is sent to Google Gemini. Do not collect confidential or regulated
+     data until retention, deletion, and incident-response procedures are in
+     place.
+
+  Anonymous sessions are protected by a browser possession token. Clearing
+  browser storage removes the recovery token, so users should sign in when they
+  need durable history across devices.
 
 ## Functional hardening included
 

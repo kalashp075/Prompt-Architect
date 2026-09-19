@@ -1,5 +1,7 @@
 import json
 import os
+import time
+import logging
 
 from google import genai
 from google.genai import types
@@ -29,19 +31,52 @@ class GeminiClient:
             raise LLMError("Gemini is not configured. Set GEMINI_API_KEY and GEMINI_MODEL.")
         self.client = genai.Client(api_key=api_key)
         self.model = model
+        self.max_output_tokens = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "4096"))
+        self.max_input_chars = int(os.environ.get("GEMINI_MAX_INPUT_CHARS", "24000"))
+        self.max_attempts = min(int(os.environ.get("GEMINI_MAX_ATTEMPTS", "3")), 3)
+        self.logger = logging.getLogger("llm.gemini")
 
     def _generate(self, prompt, *, schema=None):
+        if len(prompt) > self.max_input_chars:
+            raise LLMError("This request is too large to process. Please shorten it and try again.")
         config = types.GenerateContentConfig(
             temperature=0.2,
+            max_output_tokens=self.max_output_tokens,
             response_mime_type="application/json" if schema else "text/plain",
             response_schema=schema.model_json_schema() if schema else None,
         )
-        try:
-            response = self.client.models.generate_content(
-                model=self.model, contents=prompt, config=config
-            )
-            return response.text
-        except Exception as exc:
+        for attempt in range(self.max_attempts):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model, contents=prompt, config=config
+                )
+                text = response.text or ""
+                if len(text) > self.max_output_tokens * 8:
+                    raise LLMError("Gemini returned an unexpectedly large response.")
+                usage = getattr(response, "usage_metadata", None)
+                self.logger.info(
+                    "gemini_request_complete",
+                    extra={
+                        "model": self.model,
+                        "attempt": attempt + 1,
+                        "input_tokens": getattr(usage, "prompt_token_count", None),
+                        "output_tokens": getattr(usage, "candidates_token_count", None),
+                    },
+                )
+                return text
+            except Exception as exc:
+                if attempt < self.max_attempts - 1 and self._is_transient(exc):
+                    time.sleep(0.25 * (2 ** attempt))
+                    continue
+                return self._raise_llm_error(exc)
+
+    @staticmethod
+    def _is_transient(exc):
+        message = str(exc).lower()
+        return any(token in message for token in ("429", "quota", "rate", "503", "unavailable", "timeout", "temporarily"))
+
+    @staticmethod
+    def _raise_llm_error(exc):
             message = str(exc).lower()
             if "429" in message or "quota" in message or "rate" in message:
                 raise LLMRateLimitError(

@@ -5,6 +5,8 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "./supabase";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const sessionStorageKey = "prompt-architect-session";
+const sessionTokenStorageKey = "prompt-architect-session-token";
 const categories = [
   ["general", "General", "A flexible prompt for any kind of project."],
   ["design", "Design / UI", "Shape thoughtful interfaces and experiences."],
@@ -26,11 +28,18 @@ class ApiError extends Error {
 
 async function request(path, options = {}) {
   const { data: authData } = supabase ? await supabase.auth.getSession() : { data: { session: null } };
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  if (authData.session?.access_token) headers.Authorization = `Bearer ${authData.session.access_token}`;
+  const { headers: optionHeaders, ...requestOptions } = options;
+  const headers = { "Content-Type": "application/json", ...(optionHeaders || {}) };
+  if (authData.session?.access_token) {
+    headers.Authorization = `Bearer ${authData.session.access_token}`;
+    delete headers["X-Session-Token"];
+  } else {
+    const sessionToken = localStorage.getItem(sessionTokenStorageKey);
+    if (sessionToken) headers["X-Session-Token"] = sessionToken;
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 90000);
-  const response = await fetch(`${apiBaseUrl}${path}`, { headers, signal: controller.signal, ...options })
+  const response = await fetch(`${apiBaseUrl}${path}`, { ...requestOptions, headers, signal: controller.signal })
     .catch((error) => {
       if (error.name === "AbortError") throw new ApiError("The request took too long. Please try again.", { code: "timeout" });
       throw new ApiError("Can't reach the server right now.", { code: "network_error" });
@@ -174,7 +183,7 @@ function WizardProgress({ current }) {
 function InputScreen({ onCreated }) {
   const [rawInput, setRawInput] = useState(""); const [category, setCategory] = useState("general"); const [validationError, setValidationError] = useState(""); const [targetOpen, setTargetOpen] = useState(false);
   const targetRef = useRef(null);
-  const mutation = useMutation({ mutationFn: (body) => request("/api/sessions/", { method: "POST", body: JSON.stringify(body) }), onSuccess: (session) => onCreated(session.id) });
+  const mutation = useMutation({ mutationFn: (body) => request("/api/sessions/", { method: "POST", body: JSON.stringify(body) }), onSuccess: (session) => onCreated(session) });
   useEffect(() => {
     const closeTarget = (event) => {
       if (targetRef.current && !targetRef.current.contains(event.target)) setTargetOpen(false);
@@ -315,28 +324,56 @@ function SessionDetail() {
   return <ResultScreen session={session} />;
 }
 
-function PlaceholderPage({ title }) {
-  return <div className="placeholder-page"><span className="eyebrow"><span className="eyebrow-dot" /> Prompt Architect</span><h1>{title}</h1><p>This page is being prepared. Content will be added soon.</p><Link to="/" className="button button-dark">Back to Prompt Architect <Icon name="arrow" size={16} /></Link></div>;
+function InfoPage({ title, intro, sections }) {
+  return <div className="placeholder-page info-page"><span className="eyebrow"><span className="eyebrow-dot" /> Prompt Architect</span><h1>{title}</h1><p>{intro}</p>{sections.map(({ heading, body }) => <section key={heading}><h2>{heading}</h2><p>{body}</p></section>)}<Link to="/" className="button button-dark">Back to Prompt Architect <Icon name="arrow" size={16} /></Link></div>;
 }
 
 function App() {
-  const [sessionId, setSessionId] = useState(() => localStorage.getItem("prompt-architect-session"));
+  const [sessionId, setSessionId] = useState(() => localStorage.getItem(sessionStorageKey));
   const [authSession, setAuthSession] = useState(null);
   const location = useLocation(); const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: sessions, isLoading: sessionsLoading } = useQuery({ queryKey: ["sessions"], queryFn: () => request("/api/sessions/"), enabled: Boolean(authSession), retry: false });
-  const setSession = (id) => { localStorage.setItem("prompt-architect-session", id); setSessionId(id); };
-  const reset = () => { localStorage.removeItem("prompt-architect-session"); setSessionId(null); };
+  const setSession = (session) => {
+    localStorage.setItem(sessionStorageKey, session.id);
+    if (session.session_token) localStorage.setItem(sessionTokenStorageKey, session.session_token);
+    else localStorage.removeItem(sessionTokenStorageKey);
+    setSessionId(session.id);
+  };
+  const reset = () => {
+    localStorage.removeItem(sessionStorageKey);
+    localStorage.removeItem(sessionTokenStorageKey);
+    setSessionId(null);
+  };
   useEffect(() => { if (!supabase) return undefined; supabase.auth.getSession().then(({ data }) => setAuthSession(data.session)); const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => setAuthSession(session)); return () => listener.subscription.unsubscribe(); }, []);
   const logout = async () => { await supabase?.auth.signOut(); queryClient.removeQueries({ queryKey: ["sessions"] }); navigate("/"); };
   let content;
   if (location.pathname === "/login") content = <AuthScreen mode="login" onAuthenticated={() => navigate("/")} />;
   else if (location.pathname === "/signup") content = <AuthScreen mode="signup" onAuthenticated={() => navigate("/")} />;
-  else if (location.pathname === "/docs") content = <PlaceholderPage title="Docs" />;
-  else if (location.pathname === "/privacy") content = <PlaceholderPage title="Privacy Policy" />;
-  else if (location.pathname === "/terms") content = <PlaceholderPage title="Terms" />;
-  else if (location.pathname === "/security") content = <PlaceholderPage title="Security" />;
-  else if (location.pathname === "/faqs") content = <PlaceholderPage title="FAQs" />;
+  else if (location.pathname === "/docs") content = <InfoPage title="Documentation" intro="Prompt Architect turns an idea into a structured, implementation-ready prompt." sections={[
+    { heading: "How it works", body: "Enter an idea, answer clarification questions or ask Prompt Architect to make bounded assumptions, review the interpretation, and generate the final prompt." },
+    { heading: "Your data", body: "Sessions are stored by the backend so you can resume them. Sign-in attaches sessions to your account; anonymous sessions are protected by a private browser possession token." },
+    { heading: "Production setup", body: "Configure the backend environment from backend/.env.example, run Django migrations, serve Django behind HTTPS, and set VITE_API_BASE_URL plus the public Supabase values in the frontend environment." },
+  ]} />;
+  else if (location.pathname === "/privacy") content = <InfoPage title="Privacy Policy" intro="This summary explains what Prompt Architect processes. Review it before entering confidential information." sections={[
+    { heading: "Information processed", body: "We process your prompt idea, clarification answers, structured specification, generated prompt, timestamps, and—when you sign in—your Supabase user ID and email address." },
+    { heading: "Gemini processing", body: "Your idea and answers are sent from our backend to Google Gemini to analyze requirements and generate prompts. Do not submit passwords, API keys, regulated data, or confidential information you are not permitted to share." },
+    { heading: "Retention and deletion", body: "Saved sessions remain available until deleted by the application owner. Production deployments should provide a deletion workflow and retention schedule before collecting sensitive or regulated data." },
+  ]} />;
+  else if (location.pathname === "/terms") content = <InfoPage title="Terms" intro="Use Prompt Architect responsibly and review generated output before relying on it." sections={[
+    { heading: "No guarantee of output", body: "Generated prompts and assumptions are suggestions, not professional, legal, security, or implementation advice. You are responsible for reviewing and validating them." },
+    { heading: "Acceptable use", body: "Do not use the service to submit secrets, personal data you do not have permission to process, or content that abuses the service or attempts to evade its safeguards." },
+  ]} />;
+  else if (location.pathname === "/security") content = <InfoPage title="Security" intro="Prompt Architect keeps Gemini credentials on the backend and uses Supabase Auth for browser authentication." sections={[
+    { heading: "Credentials", body: "Gemini API keys, database credentials, and Supabase service-level credentials must never be placed in frontend code or VITE_ variables. Public environment examples contain placeholders only." },
+    { heading: "Reporting an issue", body: "Please do not publish sensitive security details in a public issue. Contact the project maintainer privately with reproduction steps and affected endpoints." },
+    { heading: "Deployment baseline", body: "Use HTTPS, restrictive CORS and ALLOWED_HOSTS values, secure cookies, a strong Django secret, enforced JWT issuer validation, database backups, and monitoring." },
+  ]} />;
+  else if (location.pathname === "/faqs") content = <InfoPage title="FAQs" intro="A few practical answers about the current MVP." sections={[
+    { heading: "How many questions will I get?", body: "The backend chooses category-specific limits: up to 8 for General and Design, and up to 10 for Frontend, Backend, and Full Stack. You can stop early and ask the system to make assumptions." },
+    { heading: "Can I edit the result?", body: "Yes. Review screens preserve confirmed answers, skipped items, and assumption provenance so you can correct the specification before generating." },
+    { heading: "Is my anonymous idea public?", body: "No. Anonymous sessions use a private possession token stored by the browser. Keep that browser storage private; clearing it means the session cannot be recovered." },
+  ]} />;
   else if (location.pathname === "/sessions") content = authSession ? <SessionsList /> : <AuthScreen mode="login" onAuthenticated={() => navigate("/sessions")} />;
   else if (location.pathname.startsWith("/sessions/")) content = <SessionDetail />;
   else content = sessionId ? <SessionFlow sessionId={sessionId} onReset={reset} /> : <InputScreen onCreated={setSession} />;

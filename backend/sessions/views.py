@@ -1,6 +1,14 @@
+import hashlib
+import secrets
+from datetime import timedelta
+
+from django.conf import settings
+from django.db import transaction
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from llm.client import GeminiClient
@@ -24,17 +32,36 @@ QUESTION_LIMITS = {
 }
 
 
-def get_session(session_id):
-    return get_object_or_404(
-        PromptSession.objects.select_related("specification", "generated_prompt"),
+def get_session(session_id, *, lock=False):
+    queryset = PromptSession.objects.select_related("specification", "generated_prompt")
+    if lock:
+        queryset = queryset.select_for_update(of=("self",))
+    session = get_object_or_404(
+        queryset,
         id=session_id,
     )
+    if session.status in {
+        PromptSession.Status.ANALYZING,
+        PromptSession.Status.GENERATING_ASSUMPTIONS,
+        PromptSession.Status.GENERATING,
+    } and session.processing_started_at and session.processing_started_at < timezone.now() - timedelta(minutes=10):
+        session.status = PromptSession.Status.ERROR
+        session.processing_started_at = None
+        session.save(update_fields=["status", "processing_started_at", "updated_at"])
+    return session
 
 
 def can_access(request, session):
+    if session.user_id is None:
+        supplied = request.headers.get("X-Session-Token", "")
+        if settings.TESTING and not session.possession_token_hash:
+            return True
+        return bool(supplied) and secrets.compare_digest(
+            session.possession_token_hash,
+            hashlib.sha256(supplied.encode()).hexdigest(),
+        )
     return (
-        session.user_id is None
-        or (request.user is not None and request.user.is_authenticated and session.user_id == request.user.id)
+        request.user is not None and request.user.is_authenticated and session.user_id == request.user.id
     )
 
 
@@ -94,12 +121,15 @@ def apply_assumption_result(session, analysis):
     spec.save()
     session.current_question = ""
     session.status = PromptSession.Status.AWAITING_CUSTOM_REQS
-    session.save(update_fields=["current_question", "status", "updated_at"])
+    session.processing_started_at = None
+    session.save(update_fields=["current_question", "status", "processing_started_at", "updated_at"])
 
 
 class SessionCollectionView(APIView):
     authentication_classes = [SupabaseJWTAuthentication]
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "gemini"
 
     def get(self, request):
         if request.user is None or not request.user.is_authenticated:
@@ -112,16 +142,20 @@ class SessionCollectionView(APIView):
         serializer.is_valid(raise_exception=True)
         raw_input = serializer.validated_data["raw_input"]
         category = serializer.validated_data["target_category"]
+        possession_token = secrets.token_urlsafe(32)
         session = PromptSession.objects.create(
             raw_input=raw_input, target_category=category,
             status=PromptSession.Status.ANALYZING,
             user=request.user if request.user is not None and request.user.is_authenticated else None,
+            possession_token_hash=hashlib.sha256(possession_token.encode()).hexdigest(),
+            processing_started_at=timezone.now(),
         )
         try:
             analysis = GeminiClient().analyze(raw_input, category)
         except LLMError as exc:
             session.status = PromptSession.Status.ERROR
-            session.save(update_fields=["status", "updated_at"])
+            session.processing_started_at = None
+            session.save(update_fields=["status", "processing_started_at", "updated_at"])
             return error_response(exc)
         unknowns = [item.model_dump() for item in analysis.unknowns[:4]]
         question_limit = QUESTION_LIMITS[category]
@@ -140,9 +174,10 @@ class SessionCollectionView(APIView):
         session.question_limit = question_limit
         session.status = PromptSession.Status.AWAITING_ANSWERS
         session.current_question = unknowns[0]["question"] if unknowns else ""
+        session.processing_started_at = None
         session.save(
             update_fields=[
-                "question_limit", "current_question", "status", "updated_at",
+                "question_limit", "current_question", "status", "processing_started_at", "updated_at",
             ]
         )
         if not session.current_question:
@@ -152,11 +187,15 @@ class SessionCollectionView(APIView):
                 )
             except LLMError as exc:
                 session.status = PromptSession.Status.ERROR
-                session.save(update_fields=["status", "updated_at"])
+                session.processing_started_at = None
+                session.save(update_fields=["status", "processing_started_at", "updated_at"])
                 return error_response(exc)
             session.current_question = question.question
             session.save(update_fields=["current_question", "updated_at"])
-        return Response(PromptSessionSerializer(session).data, status=201)
+        payload = PromptSessionSerializer(session).data
+        if session.user_id is None:
+            payload["session_token"] = possession_token
+        return Response(payload, status=201)
 
 
 class SessionDetailView(APIView):
@@ -201,23 +240,10 @@ class AnswersView(APIView):
 class QuestionAnswerView(APIView):
     authentication_classes = [SupabaseJWTAuthentication]
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "gemini"
 
     def post(self, request, session_id):
-        session = get_session(session_id)
-        denied = require_session_access(request, session)
-        if denied:
-            return denied
-        if session.status != PromptSession.Status.AWAITING_ANSWERS:
-            return Response(
-                {"error": {"message": "This session is not accepting clarification answers."}},
-                status=409,
-            )
-        question = session.current_question.strip()
-        if not question:
-            return Response(
-                {"error": {"message": "This session has no active clarification question."}},
-                status=409,
-            )
         serializer = QuestionAnswerSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         answer = serializer.validated_data.get("answer", "").strip()
@@ -229,24 +255,47 @@ class QuestionAnswerView(APIView):
             )
         if skipped:
             answer = ""
-        history = normalized_history(session.specification.answers)
-        history.append({
-            "question": question,
-            "answer": answer,
-            "skipped": skipped,
-            "provenance": "skipped" if skipped else "confirmed",
-        })
-        session.specification.answers = history
-        session.specification.save(update_fields=["answers"])
-        session.question_count += 1
+        with transaction.atomic():
+            session = get_session(session_id, lock=True)
+            denied = require_session_access(request, session)
+            if denied:
+                return denied
+            if session.status != PromptSession.Status.AWAITING_ANSWERS:
+                return Response(
+                    {"error": {"message": "This session is not accepting clarification answers."}},
+                    status=409,
+                )
+            if session.processing_started_at and session.processing_started_at > timezone.now() - timedelta(minutes=10):
+                return Response({"error": {"message": "Another clarification request is already being processed."}}, status=409)
+            question = session.current_question.strip()
+            if not question:
+                return Response(
+                    {"error": {"message": "This session has no active clarification question."}},
+                    status=409,
+                )
+            history = normalized_history(session.specification.answers)
+            history.append({
+                "question": question,
+                "answer": answer,
+                "skipped": skipped,
+                "provenance": "skipped" if skipped else "confirmed",
+            })
+            session.specification.answers = history
+            session.specification.save(update_fields=["answers"])
+            session.question_count += 1
+            session.processing_started_at = timezone.now()
+            if session.question_count >= session.question_limit:
+                session.assumptions_requested = True
+                session.status = PromptSession.Status.GENERATING_ASSUMPTIONS
+                session.save(
+                    update_fields=[
+                        "question_count", "assumptions_requested", "status",
+                        "processing_started_at", "updated_at",
+                    ]
+                )
+            else:
+                session.save(update_fields=["question_count", "processing_started_at", "updated_at"])
         if session.question_count >= session.question_limit:
-            session.assumptions_requested = True
-            session.status = PromptSession.Status.GENERATING_ASSUMPTIONS
-            session.save(
-                update_fields=[
-                    "question_count", "assumptions_requested", "status", "updated_at",
-                ]
-            )
             try:
                 analysis = GeminiClient().generate_assumptions(
                     session.raw_input,
@@ -256,7 +305,8 @@ class QuestionAnswerView(APIView):
                 )
             except LLMError as exc:
                 session.status = PromptSession.Status.ERROR
-                session.save(update_fields=["status", "updated_at"])
+                session.processing_started_at = None
+                session.save(update_fields=["status", "processing_started_at", "updated_at"])
                 return error_response(exc)
             apply_assumption_result(session, analysis)
             return Response(PromptSessionSerializer(session).data)
@@ -269,30 +319,38 @@ class QuestionAnswerView(APIView):
             )
         except LLMError as exc:
             session.status = PromptSession.Status.ERROR
-            session.save(update_fields=["status", "updated_at"])
+            session.processing_started_at = None
+            session.save(update_fields=["status", "processing_started_at", "updated_at"])
             return error_response(exc)
         session.current_question = next_question.question
-        session.save(update_fields=["question_count", "current_question", "updated_at"])
+        session.processing_started_at = None
+        session.save(update_fields=["question_count", "current_question", "processing_started_at", "updated_at"])
         return Response(PromptSessionSerializer(session).data)
 
 
 class AssumptionsView(APIView):
     authentication_classes = [SupabaseJWTAuthentication]
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "gemini"
 
     def post(self, request, session_id):
-        session = get_session(session_id)
-        denied = require_session_access(request, session)
-        if denied:
-            return denied
-        if session.status != PromptSession.Status.AWAITING_ANSWERS:
-            return Response(
-                {"error": {"message": "This session is not collecting clarification answers."}},
-                status=409,
-            )
-        session.assumptions_requested = True
-        session.status = PromptSession.Status.GENERATING_ASSUMPTIONS
-        session.save(update_fields=["assumptions_requested", "status", "updated_at"])
+        with transaction.atomic():
+            session = get_session(session_id, lock=True)
+            denied = require_session_access(request, session)
+            if denied:
+                return denied
+            if session.status != PromptSession.Status.AWAITING_ANSWERS:
+                return Response(
+                    {"error": {"message": "This session is not collecting clarification answers."}},
+                    status=409,
+                )
+            if session.processing_started_at and session.processing_started_at > timezone.now() - timedelta(minutes=10):
+                return Response({"error": {"message": "Another clarification request is already being processed."}}, status=409)
+            session.assumptions_requested = True
+            session.status = PromptSession.Status.GENERATING_ASSUMPTIONS
+            session.processing_started_at = timezone.now()
+            session.save(update_fields=["assumptions_requested", "status", "processing_started_at", "updated_at"])
         try:
             analysis = GeminiClient().generate_assumptions(
                 session.raw_input,
@@ -302,7 +360,8 @@ class AssumptionsView(APIView):
             )
         except LLMError as exc:
             session.status = PromptSession.Status.ERROR
-            session.save(update_fields=["status", "updated_at"])
+            session.processing_started_at = None
+            session.save(update_fields=["status", "processing_started_at", "updated_at"])
             return error_response(exc)
         apply_assumption_result(session, analysis)
         return Response(PromptSessionSerializer(session).data)
@@ -311,6 +370,8 @@ class AssumptionsView(APIView):
 class CustomRequirementsView(APIView):
     authentication_classes = [SupabaseJWTAuthentication]
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "gemini"
 
     def patch(self, request, session_id):
         session = get_session(session_id)
@@ -404,14 +465,29 @@ class BackView(APIView):
 class GenerateView(APIView):
     authentication_classes = [SupabaseJWTAuthentication]
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "gemini"
 
     def post(self, request, session_id):
         session = get_session(session_id)
         denied = require_session_access(request, session)
         if denied:
             return denied
-        session.status = PromptSession.Status.GENERATING
-        session.save(update_fields=["status", "updated_at"])
+        if session.status == PromptSession.Status.COMPLETE and hasattr(session, "generated_prompt"):
+            return Response(PromptSessionSerializer(session).data)
+        if session.status == PromptSession.Status.GENERATING:
+            return Response({"error": {"message": "Generation is already in progress."}}, status=409)
+        started = PromptSession.objects.filter(
+            id=session.id,
+            status__in=[PromptSession.Status.READY_FOR_REVIEW, PromptSession.Status.ERROR],
+        ).update(
+            status=PromptSession.Status.GENERATING,
+            processing_started_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+        if not started:
+            return Response({"error": {"message": "This session is not ready to generate."}}, status=409)
+        session.refresh_from_db()
         try:
             content = GeminiClient().generate(
                 SpecificationSerializer(session.specification).data,
@@ -419,9 +495,11 @@ class GenerateView(APIView):
             )
         except LLMError as exc:
             session.status = PromptSession.Status.ERROR
-            session.save(update_fields=["status", "updated_at"])
+            session.processing_started_at = None
+            session.save(update_fields=["status", "processing_started_at", "updated_at"])
             return error_response(exc)
         GeneratedPrompt.objects.update_or_create(session=session, defaults={"content": content})
         session.status = PromptSession.Status.COMPLETE
-        session.save(update_fields=["status", "updated_at"])
+        session.processing_started_at = None
+        session.save(update_fields=["status", "processing_started_at", "updated_at"])
         return Response(PromptSessionSerializer(session).data)
