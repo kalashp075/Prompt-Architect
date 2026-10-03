@@ -1,25 +1,26 @@
+import uuid
 from unittest.mock import patch
 
 from django.test import TestCase
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APIRequestFactory
 
+from accounts.models import User
 from llm.schemas import AnalysisSpec, ClarificationQuestion
 
 from .models import PromptSession, Specification
-from .views import QUESTION_LIMITS
+from .views import QUESTION_LIMITS, SessionCollectionView
 from .serializers import CreateSessionSerializer
 
 
 class AdaptiveClarificationTests(TestCase):
-    def test_anonymous_session_requires_possession_token(self):
-        session = PromptSession.objects.create(
-            raw_input="Build a web app for a small team.",
-            target_category=PromptSession.TargetCategory.FRONTEND,
-            status=PromptSession.Status.AWAITING_ANSWERS,
-            possession_token_hash="not-the-token",
+    def test_session_creation_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+        response = self.client.post(
+            "/api/sessions/",
+            {"raw_input": "Build a web app for a small team.", "target_category": "frontend"},
+            format="json",
         )
-        response = self.client.get(f"/api/sessions/{session.id}/")
-        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.status_code, 401)
 
     def test_raw_input_has_a_bounded_length(self):
         serializer = CreateSessionSerializer(data={
@@ -31,8 +32,69 @@ class AdaptiveClarificationTests(TestCase):
     def test_fullstack_uses_ten_question_cap(self):
         self.assertEqual(QUESTION_LIMITS[PromptSession.TargetCategory.FULLSTACK], 10)
 
+    def test_history_reads_do_not_use_gemini_throttle(self):
+        view = SessionCollectionView()
+        request = APIRequestFactory().get("/api/sessions/")
+        view.setup(request)
+
+        self.assertEqual(view.get_throttles(), [])
+
+    def test_history_excludes_error_sessions(self):
+        PromptSession.objects.create(
+            raw_input="This failed prompt should not appear in history.",
+            target_category=PromptSession.TargetCategory.GENERAL,
+            status=PromptSession.Status.ERROR,
+            user=self.user,
+        )
+        PromptSession.objects.create(
+            raw_input="This unfinished prompt should not appear in history.",
+            target_category=PromptSession.TargetCategory.GENERAL,
+            status=PromptSession.Status.AWAITING_ANSWERS,
+            user=self.user,
+        )
+
+        response = self.client.get("/api/sessions/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(all(item["status"] == PromptSession.Status.COMPLETE for item in response.data))
+
+    def test_delete_session_removes_only_owned_session(self):
+        response = self.client.delete(f"/api/sessions/{self.session.id}/")
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(PromptSession.objects.filter(id=self.session.id).exists())
+        self.assertFalse(Specification.objects.filter(session_id=self.session.id).exists())
+
+    def test_delete_all_sessions_removes_only_current_users_sessions(self):
+        other_user = User.objects.create(id=uuid.uuid4(), email="other@example.com")
+        other_session = PromptSession.objects.create(
+            raw_input="Keep this other user's prompt.",
+            target_category=PromptSession.TargetCategory.GENERAL,
+            status=PromptSession.Status.COMPLETE,
+            user=other_user,
+        )
+
+        response = self.client.delete("/api/sessions/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted_count"], 1)
+        self.assertFalse(PromptSession.objects.filter(id=self.session.id).exists())
+        self.assertTrue(PromptSession.objects.filter(id=other_session.id).exists())
+
+    def test_delete_session_denies_other_users(self):
+        other_user = User.objects.create(id=uuid.uuid4(), email="other@example.com")
+        self.session.user = other_user
+        self.session.save(update_fields=["user"])
+
+        response = self.client.delete(f"/api/sessions/{self.session.id}/")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(PromptSession.objects.filter(id=self.session.id).exists())
+
     def setUp(self):
         self.client = APIClient()
+        self.user = User.objects.create(id=uuid.uuid4(), email="tester@example.com")
+        self.client.force_authenticate(user=self.user)
         self.session = PromptSession.objects.create(
             raw_input="Build a web app for a small team.",
             target_category=PromptSession.TargetCategory.FRONTEND,
@@ -40,6 +102,7 @@ class AdaptiveClarificationTests(TestCase):
             question_limit=10,
             question_count=0,
             current_question="Who will use this application?",
+            user=self.user,
         )
         self.specification = Specification.objects.create(
             session=self.session,

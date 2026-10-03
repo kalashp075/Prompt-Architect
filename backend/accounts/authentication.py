@@ -1,4 +1,5 @@
 import os
+from functools import lru_cache
 
 import jwt
 from django.conf import settings
@@ -6,6 +7,11 @@ from rest_framework.authentication import BaseAuthentication, get_authorization_
 from rest_framework.exceptions import AuthenticationFailed
 
 from .models import User
+
+
+@lru_cache(maxsize=8)
+def get_jwks_client(jwks_url):
+    return jwt.PyJWKClient(jwks_url)
 
 
 class SupabaseJWTAuthentication(BaseAuthentication):
@@ -26,7 +32,7 @@ class SupabaseJWTAuthentication(BaseAuthentication):
             raise AuthenticationFailed("Supabase JWT verification is not configured.")
 
         try:
-            signing_key = jwt.PyJWKClient(jwks_url).get_signing_key_from_jwt(token)
+            signing_key = get_jwks_client(jwks_url).get_signing_key_from_jwt(token)
             issuer = os.environ.get("SUPABASE_JWT_ISSUER")
             claims = jwt.decode(
                 token,

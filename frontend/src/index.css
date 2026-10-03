@@ -190,6 +190,27 @@ textarea:focus, input:focus { border-color: #94a3b8; box-shadow: 0 0 0 3px rgba(
 .answers-card p span { color: #94a3b8; }
 .muted-copy { color: #94a3b8 !important; }
 .result-container { max-width: 900px; margin: 0 auto; animation: rise .45s ease both; }
+.history-summary { max-width: 980px; margin: 0 auto; animation: rise .45s ease both; }
+.history-summary-header { margin-bottom: 30px; }
+.history-summary-header h1 { margin: 14px 0 10px; color: #0f172a; font-family: "Plus Jakarta Sans", sans-serif; font-size: clamp(31px, 4vw, 48px); font-weight: 800; letter-spacing: -.055em; line-height: 1.08; }
+.history-summary-header p { margin: 0; color: #64748b; font-size: 16px; line-height: 1.5; }
+.history-summary-section { margin-top: 18px; padding: 21px 23px; border: 1px solid rgba(226,232,240,.78); border-radius: 17px; background: rgba(255,255,255,.94); box-shadow: 0 13px 32px -18px rgba(15,23,42,.16); }
+.history-summary-section h2 { margin: 0 0 14px; color: #1e293b; font-family: "Plus Jakarta Sans", sans-serif; font-size: 16px; font-weight: 800; }
+.history-summary-section h3 { margin: 0 0 8px; color: #64748b; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.history-summary-raw { margin: 0; color: #475569; font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+.history-summary-meta { display: inline-block; margin-top: 13px; color: #c2410c; font-size: 11px; font-weight: 800; text-transform: capitalize; }
+.history-output-card { margin: 0; box-shadow: none; }
+.history-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.history-summary-grid > .history-summary-section { margin-top: 18px; }
+.history-summary-grid.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.history-summary-grid.compact > div { padding: 16px; border: 1px solid #f1f5f9; border-radius: 12px; }
+.history-summary-list { display: grid; gap: 9px; margin: 0; padding-left: 18px; color: #475569; font-size: 13px; line-height: 1.5; }
+.history-summary-empty { margin: 0; color: #94a3b8; font-size: 13px; }
+.history-summary-answers { display: grid; gap: 14px; }
+.history-summary-answer { padding-bottom: 14px; border-bottom: 1px solid #f1f5f9; }
+.history-summary-answer:last-child { padding-bottom: 0; border-bottom: 0; }
+.history-summary-answer strong { display: block; margin-bottom: 7px; color: #1e293b; font-size: 13px; line-height: 1.45; }
+.history-summary-answer .answer-provenance { display: block; color: #475569; font-size: 13px; line-height: 1.5; }
 .result-hero { margin-bottom: 32px; }
 .success-badge, .status-pill, .session-category { display: inline-flex; align-items: center; gap: 5px; color: #b45309; background: #fef3c7; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .success-badge { padding: 7px 10px; }
@@ -215,6 +236,11 @@ textarea:focus, input:focus { border-color: #94a3b8; box-shadow: 0 0 0 3px rgba(
 .loading-bar span { display: block; width: 40%; height: 100%; border-radius: inherit; background: #ea580c; animation: loading 1.4s ease-in-out infinite; }
 .state-card { max-width: 700px; margin: 7vh auto; }
 .history-page { max-width: 930px; margin: 0 auto; animation: rise .45s ease both; }
+.history-heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.history-heading-row .step-header { flex: 1; }
+.button-danger { color: #be123c; background: #fff1f2; border: 1px solid #fecdd3; }
+.button-danger:hover { color: #9f1239; background: #ffe4e6; border-color: #fda4af; }
+.history-summary-header .button-danger { margin-top: 22px; }
 .history-page .step-header { margin-left: 0; text-align: left; }.history-page .step-header p { margin-left: 0; }
 .session-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
 .session-card { display: flex; flex-direction: column; min-height: 177px; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; box-shadow: 0 4px 20px -10px rgba(15,23,42,.13); transition: .18s ease; }
@@ -257,4 +283,5 @@ textarea:focus, input:focus { border-color: #94a3b8; box-shadow: 0 0 0 3px rgba(
 @media (max-width: 700px) {
   .sidebar-wrap { position: fixed; z-index: 30; inset: 0 auto 0 0; width: min(280px,88vw); transform: translateX(-100%); transition: transform .22s ease; }.sidebar-wrap.open { transform: translateX(0); }.sidebar { box-shadow: 12px 0 30px rgba(15,23,42,.1); }.mobile-backdrop { display: none; position: fixed; z-index: 20; inset: 0; background: rgba(15,23,42,.2); }.mobile-backdrop.open { display: block; }.mobile-only { display: inline-grid; }.topbar { height: 64px; padding: 0 18px; }.topbar-spacer { flex: 1; }.topbar-actions { gap: 12px; }.topbar-actions .topbar-link:first-child { display: none; }.page-content { min-height: calc(100vh - 109px); padding: 46px 18px 60px; }.site-footer { flex-direction: column; padding: 17px 18px; }.footer-links { flex-wrap: wrap; gap: 8px; }.form-footer { align-items: flex-start; flex-direction: column; }.form-footer .button { width: 100%; }.spec-grid, .session-cards { grid-template-columns: 1fr; }.auth-layout { grid-template-columns: 1fr; min-height: 0; gap: 30px; }.auth-copy { text-align: center; }.auth-copy h1, .auth-copy p { margin-left: auto; margin-right: auto; }.auth-copy h1 { font-size: 37px; }.auth-card { padding: 23px; }.step-header { margin-bottom: 30px; }.step-header h1 { font-size: 35px; }.output-header { align-items: flex-start; flex-direction: column; }.output-card pre { padding: 18px; font-size: 12px; }.output-actions { flex-wrap: wrap; }.output-actions .button { flex: 1; }.result-hero h1 { font-size: 36px; }
   .wizard-progress { margin-bottom: 26px; }.wizard-progress-labels { font-size: 11px; }.question-card { padding: 24px 20px 26px; }.question-copy strong { font-size: 15px; }.question-copy input { display: block; margin-top: 16px; padding: 15px 16px; font-size: 15px; }.review-goal, .spec-card, .answers-card { padding: 18px 20px; }.review-goal::after { top: 18px; right: 20px; }.review-goal textarea { font-size: 17px; }.answers-card { padding: 0; }.answers-heading { padding: 14px 20px; }.answer-row { align-items: flex-start; padding: 12px 20px; }.answer-input { width: 100%; }.result-navigation { align-items: flex-start; flex-direction: column; gap: 9px; }
+  .history-summary-grid, .history-summary-grid.compact { grid-template-columns: 1fr; }.history-summary-section { padding: 18px 20px; }.history-summary-header h1 { font-size: 36px; }
 }

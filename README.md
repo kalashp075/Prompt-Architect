@@ -1,8 +1,8 @@
 # Prompt Architect
 
 Prompt Architect turns an unstructured idea into a clear, target-specific
-prompt. The current implementation includes the anonymous core flow,
-Supabase authentication and persistence, and functional UX hardening.
+prompt. The current implementation requires an authenticated user to start a
+session, and everything beyond the initial idea box happens only after login.
 
 ## Stack and architecture
 
@@ -49,12 +49,10 @@ python manage.py runserver
 
 The API health check is available at `http://localhost:8000/api/health/`.
 
-Anonymous sessions are protected by a one-time `session_token` returned when
-creating a session. Clients must send it as `X-Session-Token` on subsequent
-requests; authenticated sessions continue to use the Supabase bearer token.
 Production deployments must provide `DATABASE_URL`, a 32+ character
 `DJANGO_SECRET_KEY`, `SUPABASE_JWT_ISSUER`, a JWKS/URL setting, and
-`SECURE_PROXY_SSL_HEADER=https`.
+`SECURE_PROXY_SSL_HEADER=https`. Prompt creation, clarification, and final
+generation require an authenticated Supabase session.
 
 ### Frontend
 
@@ -101,11 +99,42 @@ that user. Restart both development servers after changing environment files.
 - Flash models can occasionally return temporary 503/busy responses.
 - Hosted free-tier services may sleep or cold-start after inactivity, so the
   first request can take noticeably longer.
-- Supabase email confirmation may be enabled by default for new projects.
-  Confirm the signup email or disable confirmation temporarily for local QA.
+- Email authentication uses Supabase Auth; Django does not send or store email
+  credentials. In Supabase Dashboard, open `Authentication > Providers >
+  Email`, enable the Email provider and **Confirm email**, and set the Site URL
+  plus redirect URL to your frontend origins (for local development:
+  `http://localhost:5173` and `http://localhost:5173/auth/callback`).
+- Supabase sends the confirmation link and controls its token expiry, one-time
+  use, abuse protection, and provider-side email rate limits. The UI adds a
+  60-second resend cooldown. Configure custom SMTP under
+  `Authentication > Settings > SMTP` before production; the built-in sender is
+  intended for testing and has strict limits. Do not put a Gmail app password
+  or SMTP secret in this repository or in frontend variables.
+- Signup accepts common consumer providers (Gmail, Outlook/Hotmail, Yahoo,
+  iCloud, Proton Mail, AOL, and Zoho). This is an application policy, not a
+  security boundary; update the allowlist in `frontend/src/App.jsx` if the
+  product should support additional providers.
 - The frontend production bundle may emit a non-blocking Vite chunk-size
   warning because Supabase Auth is included in the browser bundle. Vendor
   chunks are split during the production build.
+
+  ## Supabase database hardening
+
+  After running Django migrations against the target Supabase project, run
+  [`backend/supabase/rls.sql`](./backend/supabase/rls.sql) in the Supabase SQL
+  Editor. This enables Row Level Security and revokes browser-facing
+  `anon`/`authenticated` access to the Django-owned application tables. Django
+  connects through the private database connection and performs the ownership
+  checks in the API, so do not add public policies for these tables.
+
+  The script is intentionally limited to the application tables:
+
+  - `accounts_user`
+  - `prompt_sessions_promptsession`
+  - `prompt_sessions_specification`
+  - `prompt_sessions_generatedprompt`
+
+  Do not run it against Supabase-managed `auth.*` tables.
 
   ## Production checklist
 
@@ -139,9 +168,8 @@ that user. Restart both development servers after changing environment files.
      data until retention, deletion, and incident-response procedures are in
      place.
 
-  Anonymous sessions are protected by a browser possession token. Clearing
-  browser storage removes the recovery token, so users should sign in when they
-  need durable history across devices.
+  Prompt sessions are tied to the authenticated user account, so the user must
+  sign in before the app creates or resumes a prompt.
 
 ## Functional hardening included
 

@@ -1,5 +1,3 @@
-import hashlib
-import secrets
 from datetime import timedelta
 
 from django.conf import settings
@@ -52,17 +50,9 @@ def get_session(session_id, *, lock=False):
 
 
 def can_access(request, session):
-    if session.user_id is None:
-        supplied = request.headers.get("X-Session-Token", "")
-        if settings.TESTING and not session.possession_token_hash:
-            return True
-        return bool(supplied) and secrets.compare_digest(
-            session.possession_token_hash,
-            hashlib.sha256(supplied.encode()).hexdigest(),
-        )
-    return (
-        request.user is not None and request.user.is_authenticated and session.user_id == request.user.id
-    )
+    if request.user is None or not request.user.is_authenticated:
+        return False
+    return session.user_id == request.user.id
 
 
 def require_session_access(request, session):
@@ -131,10 +121,20 @@ class SessionCollectionView(APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "gemini"
 
+    def get_throttles(self):
+        if self.request.method == "GET":
+            return []
+        return super().get_throttles()
+
     def get(self, request):
         if request.user is None or not request.user.is_authenticated:
             return Response({"detail": "Authentication credentials were not provided."}, status=401)
-        sessions = PromptSession.objects.filter(user=request.user).order_by("-created_at")
+        sessions = (
+            PromptSession.objects
+            .filter(user=request.user)
+            .filter(status=PromptSession.Status.COMPLETE)
+            .order_by("-created_at")
+        )
         return Response(PromptSessionSerializer(sessions, many=True).data)
 
     def post(self, request):
@@ -142,12 +142,12 @@ class SessionCollectionView(APIView):
         serializer.is_valid(raise_exception=True)
         raw_input = serializer.validated_data["raw_input"]
         category = serializer.validated_data["target_category"]
-        possession_token = secrets.token_urlsafe(32)
+        if request.user is None or not request.user.is_authenticated:
+            return Response({"detail": "Authentication credentials were not provided."}, status=401)
         session = PromptSession.objects.create(
             raw_input=raw_input, target_category=category,
             status=PromptSession.Status.ANALYZING,
-            user=request.user if request.user is not None and request.user.is_authenticated else None,
-            possession_token_hash=hashlib.sha256(possession_token.encode()).hexdigest(),
+            user=request.user,
             processing_started_at=timezone.now(),
         )
         try:
@@ -193,9 +193,15 @@ class SessionCollectionView(APIView):
             session.current_question = question.question
             session.save(update_fields=["current_question", "updated_at"])
         payload = PromptSessionSerializer(session).data
-        if session.user_id is None:
-            payload["session_token"] = possession_token
         return Response(payload, status=201)
+
+    def delete(self, request):
+        if request.user is None or not request.user.is_authenticated:
+            return Response({"detail": "Authentication credentials were not provided."}, status=401)
+        sessions = PromptSession.objects.filter(user=request.user)
+        deleted_count = sessions.count()
+        sessions.delete()
+        return Response({"deleted_count": deleted_count}, status=200)
 
 
 class SessionDetailView(APIView):
@@ -208,6 +214,14 @@ class SessionDetailView(APIView):
         if denied:
             return denied
         return Response(PromptSessionSerializer(session).data)
+
+    def delete(self, request, session_id):
+        session = get_session(session_id)
+        denied = require_session_access(request, session)
+        if denied:
+            return denied
+        session.delete()
+        return Response(status=204)
 
 
 class AnswersView(APIView):

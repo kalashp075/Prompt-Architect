@@ -6,7 +6,7 @@ import { supabase } from "./supabase";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 const sessionStorageKey = "prompt-architect-session";
-const sessionTokenStorageKey = "prompt-architect-session-token";
+const sessionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const categories = [
   ["general", "General", "A flexible prompt for any kind of project."],
   ["design", "Design / UI", "Shape thoughtful interfaces and experiences."],
@@ -16,6 +16,20 @@ const categories = [
 ];
 const listFields = ["requirements", "preferences", "constraints", "assumptions"];
 const maxInputLength = 4000;
+const supportedEmailDomains = new Set([
+  "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+  "msn.com", "yahoo.com", "yahoo.co.uk", "icloud.com", "me.com", "mac.com",
+  "proton.me", "protonmail.com", "pm.me", "aol.com", "zoho.com",
+]);
+
+function validateEmail(email) {
+  const normalized = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return "Enter a valid email address.";
+  if (!supportedEmailDomains.has(normalized.split("@")[1])) {
+    return "Please use a supported email provider such as Gmail, Outlook, Yahoo, iCloud, Proton Mail, or Zoho.";
+  }
+  return "";
+}
 
 class ApiError extends Error {
   constructor(message, { code, status } = {}) {
@@ -32,10 +46,6 @@ async function request(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(optionHeaders || {}) };
   if (authData.session?.access_token) {
     headers.Authorization = `Bearer ${authData.session.access_token}`;
-    delete headers["X-Session-Token"];
-  } else {
-    const sessionToken = localStorage.getItem(sessionTokenStorageKey);
-    if (sessionToken) headers["X-Session-Token"] = sessionToken;
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 90000);
@@ -154,17 +164,49 @@ function AppShell({ children, authSession, sessions, sessionsLoading, onLogout }
 }
 
 function AuthScreen({ mode, onAuthenticated }) {
-  const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [error, setError] = useState(null); const [pending, setPending] = useState(false);
+  const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [error, setError] = useState(null); const [pending, setPending] = useState(false); const [confirmationSent, setConfirmationSent] = useState(false); const [resendCooldown, setResendCooldown] = useState(0);
   const isSignup = mode === "signup"; const location = useLocation(); const [notice] = useState(location.state?.message || "");
+  useEffect(() => {
+    if (!resendCooldown) return undefined;
+    const timer = setInterval(() => setResendCooldown((value) => Math.max(0, value - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
+  const sendConfirmation = async () => {
+    if (!supabase || resendCooldown) return;
+    setPending(true); setError(null);
+    const result = await supabase.auth.resend({ type: "signup", email: email.trim().toLowerCase(), options: { emailRedirectTo: `${window.location.origin}/auth/callback` } });
+    if (result.error) setError(result.error); else { setConfirmationSent(true); setResendCooldown(60); }
+    setPending(false);
+  };
   const submit = async (event) => {
     event.preventDefault(); setPending(true); setError(null);
     if (!supabase) { setError(new Error("Supabase frontend variables are not configured.")); setPending(false); return; }
+    const emailError = validateEmail(email);
+    if (emailError) { setError(new Error(emailError)); setPending(false); return; }
     try {
-      const result = isSignup ? await supabase.auth.signUp({ email, password }) : await supabase.auth.signInWithPassword({ email, password });
-      if (result.error) setError(result.error); else if (result.data.session) onAuthenticated(); else setError(new Error("Check your email to confirm the account, then log in."));
+      const options = { emailRedirectTo: `${window.location.origin}/auth/callback` };
+      const result = isSignup ? await supabase.auth.signUp({ email: email.trim().toLowerCase(), password, options }) : await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
+      if (result.error) {
+        setError(result.error);
+        if (!isSignup && result.error.message.toLowerCase().includes("email not confirmed")) setConfirmationSent(true);
+      } else if (result.data.session) onAuthenticated(); else { setConfirmationSent(true); setResendCooldown(60); }
     } catch { setError(new Error("Can't reach the authentication service right now. Please try again.")); } finally { setPending(false); }
   };
-  return <div className="auth-layout"><div className="auth-copy"><span className="eyebrow"><span className="eyebrow-dot" /> A calmer way to prompt</span><h1>{isSignup ? "Give your ideas a clearer voice." : "Welcome back to your ideas."}</h1><p>Turn the first messy thought into a focused brief your tools can actually use.</p></div><form onSubmit={submit} className="auth-card"><div className="auth-card-header"><span className="brand-mark"><Icon name="spark" size={16} /></span><span className="eyebrow">Your workspace</span></div><h2>{isSignup ? "Create your account" : "Log in to Prompt Architect"}</h2><p className="form-subtitle">{isSignup ? "Save your prompts and pick up where you left off." : "Your prompt history is waiting for you."}</p><label>Email<input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label><label>Password<input type="password" required minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 6 characters" /></label><button disabled={pending} className="button button-dark full-width">{pending ? <Spinner label="Working..." /> : isSignup ? "Create account" : "Log in"} <Icon name="arrow" size={16} /></button>{notice ? <p className="notice">{notice}</p> : null}<ErrorMessage error={error} /><p className="auth-switch">{isSignup ? "Already have an account?" : "New to Prompt Architect?"} <Link to={isSignup ? "/login" : "/signup"}>{isSignup ? "Log in" : "Create an account"}</Link></p></form></div>;
+  return <div className="auth-layout"><div className="auth-copy"><span className="eyebrow"><span className="eyebrow-dot" /> A calmer way to prompt</span><h1>{isSignup ? "Give your ideas a clearer voice." : "Welcome back to your ideas."}</h1><p>Turn the first messy thought into a focused brief your tools can actually use.</p></div><form onSubmit={submit} className="auth-card"><div className="auth-card-header"><span className="brand-mark"><Icon name="spark" size={16} /></span><span className="eyebrow">Your workspace</span></div><h2>{confirmationSent ? "Check your email" : isSignup ? "Create your account" : "Log in to Prompt Architect"}</h2><p className="form-subtitle">{confirmationSent ? `We sent a confirmation link to ${email}. Open it to activate your account, then return here to log in.` : isSignup ? "Save your prompts and pick up where you left off." : "Your prompt history is waiting for you."}</p>{!confirmationSent ? <><label>Email<input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@gmail.com" /></label><label>Password<input type="password" required minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" /></label><button disabled={pending} className="button button-dark full-width">{pending ? <Spinner label="Working..." /> : isSignup ? "Create account" : "Log in"} <Icon name="arrow" size={16} /></button></> : <><button type="button" disabled={pending || resendCooldown > 0} onClick={sendConfirmation} className="button button-outline full-width">{resendCooldown ? `Resend available in ${resendCooldown}s` : pending ? <Spinner label="Sending..." /> : "Resend confirmation email"}</button><Link to="/login" className="button button-dark full-width">Continue to log in <Icon name="arrow" size={16} /></Link></>}{notice ? <p className="notice">{notice}</p> : null}<ErrorMessage error={error} /><p className="auth-switch">{isSignup ? "Already have an account?" : "New to Prompt Architect?"} <Link to={isSignup ? "/login" : "/signup"}>{isSignup ? "Log in" : "Create an account"}</Link></p></form></div>;
+}
+
+function AuthCallback() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    let active = true;
+    supabase?.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      if (data.session) navigate("/", { replace: true });
+      else navigate("/login", { replace: true, state: { message: "Your email is confirmed. You can now log in." } });
+    });
+    return () => { active = false; };
+  }, [navigate]);
+  return <div className="state-card"><div className="empty-history"><div className="empty-icon"><Icon name="check" size={25} /></div><h2>Email confirmed.</h2><p>Your account is ready. Redirecting you to log in...</p></div></div>;
 }
 
 function StepHeader({ eyebrow, title, subtitle }) {
@@ -180,8 +222,9 @@ function WizardProgress({ current }) {
   return <div className="wizard-progress" aria-label={`Step ${current + 1} of ${steps.length}: ${steps[current]}`}><div className="wizard-progress-track"><span style={{ width: `${(current / (steps.length - 1)) * 100}%` }} /></div><div className="wizard-progress-labels">{steps.map((step, index) => <span key={step} className={index <= current ? "complete" : ""}>{step}</span>)}</div></div>;
 }
 
-function InputScreen({ onCreated }) {
+function InputScreen({ authSession, onCreated }) {
   const [rawInput, setRawInput] = useState(""); const [category, setCategory] = useState("general"); const [validationError, setValidationError] = useState(""); const [targetOpen, setTargetOpen] = useState(false);
+  const navigate = useNavigate();
   const targetRef = useRef(null);
   const mutation = useMutation({ mutationFn: (body) => request("/api/sessions/", { method: "POST", body: JSON.stringify(body) }), onSuccess: (session) => onCreated(session) });
   useEffect(() => {
@@ -198,7 +241,18 @@ function InputScreen({ onCreated }) {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, []);
-  const submit = (event) => { event.preventDefault(); const length = rawInput.trim().length; if (length < 10) { setValidationError("Please enter at least 10 characters."); return; } if (length > maxInputLength) { setValidationError(`Please keep your idea under ${maxInputLength} characters.`); return; } setValidationError(""); mutation.mutate({ raw_input: rawInput.trim(), target_category: category }); };
+  const submit = (event) => {
+    event.preventDefault();
+    if (!authSession) {
+      navigate("/login", { state: { message: "Please log in to start a prompt." } });
+      return;
+    }
+    const length = rawInput.trim().length;
+    if (length < 10) { setValidationError("Please enter at least 10 characters."); return; }
+    if (length > maxInputLength) { setValidationError(`Please keep your idea under ${maxInputLength} characters.`); return; }
+    setValidationError("");
+    mutation.mutate({ raw_input: rawInput.trim(), target_category: category });
+  };
   const selectedCategory = categories.find(([value]) => value === category);
   return <div className="flow-container"><StepHeader eyebrow="Start with a thought" title={<>What are you <em>building?</em></>} subtitle="Describe the idea in your own words. Prompt Architect will help you find the shape inside it." /><form onSubmit={submit} className="prompt-form"><div className="textarea-wrap"><textarea value={rawInput} onChange={(event) => setRawInput(event.target.value)} rows={7} placeholder="I want to build..." autoFocus /><div className="composer-controls"><div ref={targetRef} className="target-menu"><button type="button" className="target-picker" onClick={() => setTargetOpen((open) => !open)} aria-expanded={targetOpen} aria-haspopup="listbox"><span>Prompt target:</span><strong>{selectedCategory[1]}</strong><Icon name="chevron" size={15} /></button>{targetOpen ? <div className="target-popover" role="listbox" aria-label="Prompt target options">{categories.map(([value, label, description]) => <button type="button" role="option" aria-selected={category === value} key={value} className={category === value ? "target-option selected" : "target-option"} onClick={() => { setCategory(value); setTargetOpen(false); }}><span className="target-option-copy"><strong>{label}</strong><small>{description}</small></span>{category === value ? <Icon name="check" size={17} /> : null}</button>)}</div> : null}</div><span className="textarea-count">{rawInput.length}/{maxInputLength}</span></div></div>{validationError ? <p className="field-error" role="alert">{validationError}</p> : null}<div className="form-footer"><span className="privacy-note"><span className="lock-dot">✦</span> Your idea stays private</span><button disabled={mutation.isPending} className="button button-dark">{mutation.isPending ? <Spinner label="Analyzing your idea..." /> : <>Analyze my idea <Icon name="arrow" size={16} /></>}</button></div><ErrorMessage error={mutation.error} onRetry={() => mutation.mutate(mutation.variables)} /></form></div>;
 }
@@ -285,6 +339,73 @@ function ResultScreen({ session, onBack, onReset }) {
   return <div className="result-container"><WizardProgress current={4} /><div className="result-hero"><span className="success-badge"><Icon name="check" size={15} /> Ready to use</span><h1>Your prompt is ready.</h1><p>Clear direction, shaped from your original idea.</p></div><div className="output-card"><div className="output-header"><span><span className="output-dot" /> Markdown prompt</span><span className="output-label">Generated for {session.target_category}</span></div><pre>{content}</pre><div className="output-actions"><button onClick={copy} className="button button-dark button-small">{copied ? <><Icon name="check" size={15} /> Copied!</> : <><Icon name="copy" size={15} /> Copy prompt</>}</button><button onClick={download} className="button button-outline button-small"><Icon name="download" size={15} /> Download .md</button></div></div><div className="result-navigation"><BackButton onClick={onBack} /><button type="button" onClick={onReset} className="start-another"><Icon name="plus" size={16} /> Start another prompt</button></div></div>;
 }
 
+function SummarySection({ title, children }) {
+  return <section className="history-summary-section"><h2>{title}</h2>{children}</section>;
+}
+
+function SummaryList({ items, empty = "None recorded." }) {
+  return items?.length ? <ul className="history-summary-list">{items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul> : <p className="history-summary-empty">{empty}</p>;
+}
+
+function HistorySummary({ session, onDelete, isDeleting, deleteError }) {
+  const [copied, setCopied] = useState(false);
+  const content = session.generated_prompt?.content || "";
+  const spec = session.specification || {};
+  const copy = async () => {
+    await navigator.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2200);
+  };
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([content], { type: "text/markdown;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "prompt.md";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  return <div className="history-summary">
+    <div className="history-summary-header">
+      <span className="eyebrow"><span className="eyebrow-dot" /> Completed prompt</span>
+      <h1>Your prompt summary.</h1>
+      <p>Everything that shaped this prompt, kept together with the final Markdown output.</p>
+      <button
+        type="button"
+        className="button button-danger button-small"
+        onClick={onDelete}
+        disabled={isDeleting}
+      >
+        {isDeleting ? <Spinner label="Deleting..." /> : "Delete this prompt"}
+      </button>
+      {deleteError ? <ErrorMessage error={deleteError} onRetry={onDelete} /> : null}
+    </div>
+    <SummarySection title="Original idea">
+      <p className="history-summary-raw">{session.raw_input}</p>
+      <span className="history-summary-meta">{session.target_category}</span>
+    </SummarySection>
+    <SummarySection title="Final prompt">
+      <div className="output-card history-output-card"><div className="output-header"><span><span className="output-dot" /> Markdown prompt</span><span className="output-label">Generated for {session.target_category}</span></div><pre>{content}</pre><div className="output-actions"><button onClick={copy} className="button button-dark button-small">{copied ? <><Icon name="check" size={15} /> Copied!</> : <><Icon name="copy" size={15} /> Copy prompt</>}</button><button onClick={download} className="button button-outline button-small"><Icon name="download" size={15} /> Download .md</button></div></div>
+    </SummarySection>
+    <div className="history-summary-grid">
+      <SummarySection title="Questions and answers">
+        {spec.answers?.length ? <div className="history-summary-answers">{spec.answers.map((item, index) => <div className="history-summary-answer" key={`${item.question}-${index}`}><strong>{item.question}</strong><span className={item.skipped ? "answer-provenance skipped" : "answer-provenance"}>{item.skipped ? "Skipped — unresolved" : item.answer || "No answer recorded"}</span></div>)}</div> : <p className="history-summary-empty">No clarification questions were recorded.</p>}
+      </SummarySection>
+      <SummarySection title="Custom requirements">
+        <p className="history-summary-raw">{spec.custom_requirements || "No custom requirements were added."}</p>
+      </SummarySection>
+    </div>
+    <SummarySection title="Final interpretation">
+      <div className="history-summary-grid compact">
+        <div><h3>Goal</h3><p className="history-summary-raw">{spec.goal}</p></div>
+        <div><h3>Requirements</h3><SummaryList items={spec.requirements} /></div>
+        <div><h3>Preferences</h3><SummaryList items={spec.preferences} /></div>
+        <div><h3>Constraints</h3><SummaryList items={spec.constraints} /></div>
+        <div><h3>Assumptions</h3><SummaryList items={spec.assumptions} /></div>
+      </div>
+    </SummarySection>
+  </div>;
+}
+
 function SessionFlow({ sessionId, onReset }) {
   const queryClient = useQueryClient();
   const { data: session, isLoading, error } = useQuery({ queryKey: ["session", sessionId], queryFn: () => request(`/api/sessions/${sessionId}/`), refetchOnWindowFocus: false, retry: false });
@@ -303,6 +424,10 @@ function SessionFlow({ sessionId, onReset }) {
   return <div className="state-card"><ErrorMessage error={generate.error || new Error("This session needs attention.")} onRetry={() => generate.mutate()} /><button onClick={onReset} className="start-another">Start over</button></div>;
 }
 
+function isValidSessionId(sessionId) {
+  return typeof sessionId === "string" && sessionIdPattern.test(sessionId);
+}
+
 function LoadingState({ label, detail }) {
   return <div className="loading-state"><div className="loading-orbit"><span /><span /><span /></div><h2>{label}</h2><p>{detail || "One moment while we bring your workspace together."}</p><div className="loading-bar"><span /></div></div>;
 }
@@ -310,18 +435,45 @@ function LoadingState({ label, detail }) {
 function SessionsList() {
   const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({ queryKey: ["sessions"], queryFn: () => request("/api/sessions/") });
+  const deleteAll = useMutation({
+    mutationFn: () => request("/api/sessions/", { method: "DELETE" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+  });
+  const handleDeleteAll = () => {
+    if (data?.length && window.confirm("Delete all saved prompts? This cannot be undone.")) {
+      deleteAll.mutate();
+    }
+  };
   if (isLoading) return <LoadingState label="Loading your history..." />;
   if (error) return <div className="state-card"><ErrorMessage error={error} onRetry={() => queryClient.invalidateQueries({ queryKey: ["sessions"] })} /></div>;
-  return <div className="history-page"><StepHeader eyebrow="Workspace" title="Your prompt history." subtitle="A quiet place for the ideas you've already shaped." />{!data.length ? <div className="empty-history"><div className="empty-icon"><Icon name="clock" size={25} /></div><h2>No saved prompts yet.</h2><p>Start with a rough idea and we’ll help you give it direction.</p><Link to="/" className="button button-dark">Create your first prompt <Icon name="arrow" size={16} /></Link></div> : <div className="session-cards">{data.map((session) => <Link key={session.id} to={`/sessions/${session.id}`} className="session-card"><div className="session-card-top"><span className="session-category">{session.target_category}</span><span className="session-date">{new Date(session.created_at).toLocaleDateString()}</span></div><h3>{session.raw_input}</h3><div className="session-card-bottom"><span className="status-pill">{session.status.replaceAll("_", " ")}</span><span className="session-open">Open <Icon name="arrow" size={14} /></span></div></Link>)}</div>}</div>;
+  return <div className="history-page"><div className="history-heading-row"><StepHeader eyebrow="Workspace" title="Your prompt history." subtitle="A quiet place for the ideas you've already shaped." />{data.length ? <button type="button" className="button button-danger button-small" onClick={handleDeleteAll} disabled={deleteAll.isPending}> {deleteAll.isPending ? <Spinner label="Deleting..." /> : "Delete all history"} </button> : null}</div>{deleteAll.error ? <ErrorMessage error={deleteAll.error} onRetry={() => deleteAll.mutate()} /> : null}{!data.length ? <div className="empty-history"><div className="empty-icon"><Icon name="clock" size={25} /></div><h2>No saved prompts yet.</h2><p>Start with a rough idea and we’ll help you give it direction.</p><Link to="/" className="button button-dark">Create your first prompt <Icon name="arrow" size={16} /></Link></div> : <div className="session-cards">{data.map((session) => <Link key={session.id} to={`/sessions/${session.id}`} className="session-card"><div className="session-card-top"><span className="session-category">{session.target_category}</span><span className="session-date">{new Date(session.created_at).toLocaleDateString()}</span></div><h3>{session.raw_input}</h3><div className="session-card-bottom"><span className="status-pill">{session.status.replaceAll("_", " ")}</span><span className="session-open">Open <Icon name="arrow" size={14} /></span></div></Link>)}</div>}</div>;
 }
 
 function SessionDetail() {
-  const { sessionId } = useParams();
-  const { data: session, isLoading, error } = useQuery({ queryKey: ["session", sessionId], queryFn: () => request(`/api/sessions/${sessionId}/`), retry: false });
+  const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const sessionId = location.pathname.split("/")[2] || "";
+  const validSessionId = isValidSessionId(sessionId);
+  const { data: session, isLoading, error } = useQuery({ queryKey: ["session", sessionId], queryFn: () => request(`/api/sessions/${sessionId}/`), enabled: validSessionId, retry: false });
+  const deleteMutation = useMutation({
+    mutationFn: () => request(`/api/sessions/${sessionId}/`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      queryClient.removeQueries({ queryKey: ["session", sessionId] });
+      navigate("/sessions");
+    },
+  });
+  const handleDelete = () => {
+    if (window.confirm("Delete this saved prompt? This cannot be undone.")) deleteMutation.mutate();
+  };
+  if (!validSessionId) {
+    return <div className="state-card"><div className="empty-history"><div className="empty-icon"><Icon name="clock" size={25} /></div><h2>This prompt link is invalid.</h2><p>Choose a saved prompt from your history or start a new one.</p><Link to="/sessions" className="button button-dark">View history <Icon name="arrow" size={16} /></Link></div></div>;
+  }
   if (isLoading) return <LoadingState label="Loading your prompt..." />;
   if (error) return <div className="state-card"><ErrorMessage error={error} /></div>;
-  if (session.status !== "complete") return <SessionFlow sessionId={sessionId} onReset={() => {}} />;
-  return <ResultScreen session={session} />;
+  if (session.status !== "complete") return <div className="state-card"><div className="empty-history"><div className="empty-icon"><Icon name="clock" size={25} /></div><h2>This prompt is not complete yet.</h2><p>Only completed prompts are available in history.</p><Link to="/sessions" className="button button-dark">View history <Icon name="arrow" size={16} /></Link></div></div>;
+  return <HistorySummary session={session} onDelete={handleDelete} isDeleting={deleteMutation.isPending} deleteError={deleteMutation.error} />;
 }
 
 function InfoPage({ title, intro, sections }) {
@@ -329,30 +481,35 @@ function InfoPage({ title, intro, sections }) {
 }
 
 function App() {
-  const [sessionId, setSessionId] = useState(() => localStorage.getItem(sessionStorageKey));
+  const [sessionId, setSessionId] = useState(() => {
+    const storedSessionId = localStorage.getItem(sessionStorageKey);
+    if (!isValidSessionId(storedSessionId)) {
+      localStorage.removeItem(sessionStorageKey);
+      return null;
+    }
+    return storedSessionId;
+  });
   const [authSession, setAuthSession] = useState(null);
   const location = useLocation(); const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: sessions, isLoading: sessionsLoading } = useQuery({ queryKey: ["sessions"], queryFn: () => request("/api/sessions/"), enabled: Boolean(authSession), retry: false });
   const setSession = (session) => {
     localStorage.setItem(sessionStorageKey, session.id);
-    if (session.session_token) localStorage.setItem(sessionTokenStorageKey, session.session_token);
-    else localStorage.removeItem(sessionTokenStorageKey);
     setSessionId(session.id);
   };
   const reset = () => {
     localStorage.removeItem(sessionStorageKey);
-    localStorage.removeItem(sessionTokenStorageKey);
     setSessionId(null);
   };
   useEffect(() => { if (!supabase) return undefined; supabase.auth.getSession().then(({ data }) => setAuthSession(data.session)); const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => setAuthSession(session)); return () => listener.subscription.unsubscribe(); }, []);
   const logout = async () => { await supabase?.auth.signOut(); queryClient.removeQueries({ queryKey: ["sessions"] }); navigate("/"); };
   let content;
-  if (location.pathname === "/login") content = <AuthScreen mode="login" onAuthenticated={() => navigate("/")} />;
+  if (location.pathname === "/auth/callback") content = <AuthCallback />;
+  else if (location.pathname === "/login") content = <AuthScreen mode="login" onAuthenticated={() => navigate("/")} />;
   else if (location.pathname === "/signup") content = <AuthScreen mode="signup" onAuthenticated={() => navigate("/")} />;
   else if (location.pathname === "/docs") content = <InfoPage title="Documentation" intro="Prompt Architect turns an idea into a structured, implementation-ready prompt." sections={[
     { heading: "How it works", body: "Enter an idea, answer clarification questions or ask Prompt Architect to make bounded assumptions, review the interpretation, and generate the final prompt." },
-    { heading: "Your data", body: "Sessions are stored by the backend so you can resume them. Sign-in attaches sessions to your account; anonymous sessions are protected by a private browser possession token." },
+    { heading: "Your data", body: "Sessions are stored by the backend and tied to your authenticated account so you can resume them without losing continuity." },
     { heading: "Production setup", body: "Configure the backend environment from backend/.env.example, run Django migrations, serve Django behind HTTPS, and set VITE_API_BASE_URL plus the public Supabase values in the frontend environment." },
   ]} />;
   else if (location.pathname === "/privacy") content = <InfoPage title="Privacy Policy" intro="This summary explains what Prompt Architect processes. Review it before entering confidential information." sections={[
@@ -372,11 +529,11 @@ function App() {
   else if (location.pathname === "/faqs") content = <InfoPage title="FAQs" intro="A few practical answers about the current MVP." sections={[
     { heading: "How many questions will I get?", body: "The backend chooses category-specific limits: up to 8 for General and Design, and up to 10 for Frontend, Backend, and Full Stack. You can stop early and ask the system to make assumptions." },
     { heading: "Can I edit the result?", body: "Yes. Review screens preserve confirmed answers, skipped items, and assumption provenance so you can correct the specification before generating." },
-    { heading: "Is my anonymous idea public?", body: "No. Anonymous sessions use a private possession token stored by the browser. Keep that browser storage private; clearing it means the session cannot be recovered." },
+    { heading: "Do I need an account?", body: "Yes. Prompt creation and session history require a logged-in Supabase account so that prompt data stays attached to the correct user." },
   ]} />;
   else if (location.pathname === "/sessions") content = authSession ? <SessionsList /> : <AuthScreen mode="login" onAuthenticated={() => navigate("/sessions")} />;
   else if (location.pathname.startsWith("/sessions/")) content = <SessionDetail />;
-  else content = sessionId ? <SessionFlow sessionId={sessionId} onReset={reset} /> : <InputScreen onCreated={setSession} />;
+  else content = isValidSessionId(sessionId) ? <SessionFlow sessionId={sessionId} onReset={reset} /> : <InputScreen authSession={authSession} onCreated={setSession} />;
   return <AppShell authSession={authSession} sessions={sessions} sessionsLoading={sessionsLoading} onLogout={logout}>{content}</AppShell>;
 }
 
