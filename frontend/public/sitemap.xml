@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://your-production-domain.example/</loc></url>
+  <url><loc>https://your-production-domain.example/docs</loc></url>
+  <url><loc>https://your-production-domain.example/privacy</loc></url>
+  <url><loc>https://your-production-domain.example/terms</loc></url>
+  <url><loc>https://your-production-domain.example/security</loc></url>
+  <url><loc>https://your-production-domain.example/faqs</loc></url>
+</urlset>

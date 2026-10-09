@@ -10,6 +10,7 @@
 }
 
 * { box-sizing: border-box; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 body { margin: 0; min-width: 320px; background: #fff; }
 button, input, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
@@ -26,7 +27,7 @@ a { color: inherit; text-decoration: none; }
 .new-prompt-button, .button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 44px; padding: 0 17px; border: 0; border-radius: 999px; font-size: 13px; font-weight: 700; transition: .15s ease; }
 .new-prompt-button { margin: 0 2px 27px; color: #fff; background: #18181b; box-shadow: 0 8px 18px rgba(15,23,42,.09); }
 .new-prompt-button:hover, .button-dark:hover { background: #334155; transform: translateY(-1px); box-shadow: 0 8px 18px rgba(15,23,42,.12); }
-.sidebar-label { display: flex; justify-content: space-between; padding: 0 12px; margin: 0 0 9px; color: #94a3b8; font-size: 10px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+.sidebar-label { display: flex; justify-content: space-between; padding: 0 12px; margin: 0 0 9px; color: #64748b; font-size: 10px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
 .history-heading { margin-top: 30px; }
 .muted-count { letter-spacing: 0; }
 .sidebar-nav { display: grid; gap: 3px; }

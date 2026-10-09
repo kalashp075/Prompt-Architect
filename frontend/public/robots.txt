@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /sessions/
+Disallow: /auth/
+
+Sitemap: https://your-production-domain.example/sitemap.xml
