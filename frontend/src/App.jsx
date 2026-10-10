@@ -155,7 +155,7 @@ function Topbar({ authSession, onMenu, onLogout, onExport, onDeleteData }) {
     document.addEventListener("mousedown", closeProfile);
     return () => document.removeEventListener("mousedown", closeProfile);
   }, []);
-  return <header className="topbar"><button className="icon-button mobile-only" onClick={onMenu} aria-label="Open navigation"><Icon name="menu" /></button><div className="topbar-spacer" /><div className="topbar-actions">{authSession ? <><Link to="/sessions" className="topbar-link">My history</Link><div ref={profileRef} className="profile-menu"><button type="button" className="avatar profile-trigger" onClick={() => setProfileOpen((open) => !open)} aria-expanded={profileOpen} aria-haspopup="menu">{(authSession.user.email || "U")[0].toUpperCase()}</button>{profileOpen ? <div className="profile-popover" role="menu"><p>{authSession.user.email}</p><button type="button" onClick={onExport} role="menuitem">Export my data</button><button type="button" onClick={onDeleteData} role="menuitem">Delete my application data</button><button type="button" onClick={onLogout} role="menuitem">Log out</button></div> : null}</div></> : <><Link to="/login" className="topbar-link">Log in</Link><Link to="/signup" className="button button-dark button-small">Get started <Icon name="arrow" size={15} /></Link></>}</div></header>;
+  return <header className="topbar"><button className="icon-button mobile-only" onClick={onMenu} aria-label="Open navigation"><Icon name="menu" /></button><div className="topbar-spacer" /><div className="topbar-actions">{authSession ? <><Link to="/sessions" className="topbar-link">My history</Link><div ref={profileRef} className="profile-menu"><button type="button" className="avatar profile-trigger" onClick={() => setProfileOpen((open) => !open)} aria-expanded={profileOpen} aria-haspopup="menu">{(authSession.user.email || "U")[0].toUpperCase()}</button>{profileOpen ? <div className="profile-popover" role="menu"><p>{authSession.user.email}</p><button type="button" onClick={onExport} role="menuitem">Export my data</button><button type="button" onClick={onDeleteData} role="menuitem">Delete my application data</button><button type="button" onClick={onLogout} role="menuitem">Log out</button></div> : null}</div></> : <Link to="/signup" className="button button-dark button-small">Get started <Icon name="arrow" size={15} /></Link>}</div></header>;
 }
 
 function AppShell({ children, authSession, sessions, sessionsLoading, onLogout, onExport, onDeleteData }) {
@@ -210,7 +210,7 @@ function AuthCallback() {
 }
 
 function StepHeader({ eyebrow, title, subtitle }) {
-  return <div className="step-header"><span className="eyebrow"><span className="eyebrow-dot" /> {eyebrow}</span><h1>{title}</h1>{subtitle ? <p>{subtitle}</p> : null}</div>;
+  return <div className="step-header">{eyebrow ? <span className="eyebrow"><span className="eyebrow-dot" /> {eyebrow}</span> : null}<h1>{title}</h1>{subtitle ? <p>{subtitle}</p> : null}</div>;
 }
 
 function BackButton({ onClick, disabled = false }) {
@@ -219,13 +219,19 @@ function BackButton({ onClick, disabled = false }) {
 
 function WizardProgress({ current }) {
   const steps = ["Start", "Questions", "Refine", "Review", "Ready"];
-  return <div className="wizard-progress" aria-label={`Step ${current + 1} of ${steps.length}: ${steps[current]}`}><div className="wizard-progress-track"><span style={{ width: `${(current / (steps.length - 1)) * 100}%` }} /></div><div className="wizard-progress-labels">{steps.map((step, index) => <span key={step} className={index <= current ? "complete" : ""}>{step}</span>)}</div></div>;
+  return <div className="wizard-progress" aria-label={`Step ${current + 1} of ${steps.length}: ${steps[current]}`}><div className="wizard-progress-labels">{steps.map((step, index) => <div key={step} className={index === current ? "progress-step active" : index < current ? "progress-step complete" : "progress-step"}><span className="progress-marker">{index < current ? "✓" : index + 1}</span><span>{step}</span>{index < steps.length - 1 ? <span className="progress-connector" /> : null}</div>)}</div><span className="progress-count">{current + 1} of {steps.length}</span></div>;
 }
 
 function InputScreen({ authSession, onCreated }) {
-  const [rawInput, setRawInput] = useState(""); const [category, setCategory] = useState("general"); const [validationError, setValidationError] = useState(""); const [targetOpen, setTargetOpen] = useState(false);
+  const [rawInput, setRawInput] = useState(""); const [category, setCategory] = useState("general"); const [validationError, setValidationError] = useState(""); const [inputInvalid, setInputInvalid] = useState(false); const [placeholderText, setPlaceholderText] = useState(""); const [targetOpen, setTargetOpen] = useState(false);
   const navigate = useNavigate();
   const targetRef = useRef(null);
+  const inputRef = useRef(null);
+  const placeholderExamples = [
+    "I want to build a calmer way to plan projects...",
+    "Help me turn this rough product idea into a clear brief...",
+    "I need a simple dashboard for tracking team progress...",
+  ];
   const mutation = useMutation({ mutationFn: (body) => request("/api/sessions/", { method: "POST", body: JSON.stringify(body) }), onSuccess: (session) => onCreated(session) });
   useEffect(() => {
     const closeTarget = (event) => {
@@ -241,25 +247,79 @@ function InputScreen({ authSession, onCreated }) {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, []);
+  useEffect(() => {
+    let cancelled = false;
+    let phraseIndex = 0;
+    let characterIndex = 0;
+    let deleting = false;
+    let timer;
+
+    const tick = () => {
+      if (cancelled) return;
+      const phrase = placeholderExamples[phraseIndex];
+      if (!deleting) {
+        characterIndex += 1;
+        setPlaceholderText(phrase.slice(0, characterIndex));
+        if (characterIndex === phrase.length) {
+          deleting = true;
+          timer = setTimeout(tick, 2200);
+          return;
+        }
+        timer = setTimeout(tick, 58);
+        return;
+      }
+      characterIndex -= 1;
+      setPlaceholderText(phrase.slice(0, characterIndex));
+      if (characterIndex === 0) {
+        deleting = false;
+        phraseIndex = (phraseIndex + 1) % placeholderExamples.length;
+        timer = setTimeout(tick, 450);
+        return;
+      }
+      timer = setTimeout(tick, 28);
+    };
+
+    tick();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, []);
   const submit = (event) => {
     event.preventDefault();
+    const length = rawInput.trim().length;
+    if (length === 0) {
+      setInputInvalid(true);
+      setValidationError("");
+      inputRef.current?.focus();
+      return;
+    }
+    if (length < 10) {
+      setInputInvalid(true);
+      setValidationError("Please enter at least 10 characters.");
+      inputRef.current?.focus();
+      return;
+    }
+    if (length > maxInputLength) {
+      setInputInvalid(true);
+      setValidationError(`Please keep your idea under ${maxInputLength} characters.`);
+      inputRef.current?.focus();
+      return;
+    }
+    setInputInvalid(false);
+    setValidationError("");
     if (!authSession) {
       navigate("/login", { state: { message: "Please log in to start a prompt." } });
       return;
     }
-    const length = rawInput.trim().length;
-    if (length < 10) { setValidationError("Please enter at least 10 characters."); return; }
-    if (length > maxInputLength) { setValidationError(`Please keep your idea under ${maxInputLength} characters.`); return; }
-    setValidationError("");
     mutation.mutate({ raw_input: rawInput.trim(), target_category: category });
   };
   const selectedCategory = categories.find(([value]) => value === category);
-  return <div className="flow-container"><StepHeader eyebrow="Start with a thought" title={<>What are you <em>building?</em></>} subtitle="Describe the idea in your own words. Prompt Architect will help you find the shape inside it." /><form onSubmit={submit} className="prompt-form"><div className="textarea-wrap"><label className="sr-only" htmlFor="raw-input">Describe your idea</label><textarea id="raw-input" value={rawInput} onChange={(event) => setRawInput(event.target.value)} rows={7} placeholder="I want to build..." autoFocus /><div className="composer-controls"><div ref={targetRef} className="target-menu"><button type="button" className="target-picker" onClick={() => setTargetOpen((open) => !open)} aria-expanded={targetOpen} aria-haspopup="listbox"><span>Prompt target:</span><strong>{selectedCategory[1]}</strong><Icon name="chevron" size={15} /></button>{targetOpen ? <div className="target-popover" role="listbox" aria-label="Prompt target options">{categories.map(([value, label, description]) => <button type="button" role="option" aria-selected={category === value} key={value} className={category === value ? "target-option selected" : "target-option"} onClick={() => { setCategory(value); setTargetOpen(false); }}><span className="target-option-copy"><strong>{label}</strong><small>{description}</small></span>{category === value ? <Icon name="check" size={17} /> : null}</button>)}</div> : null}</div><span className="textarea-count">{rawInput.length}/{maxInputLength}</span></div></div>{validationError ? <p className="field-error" role="alert">{validationError}</p> : null}<div className="form-footer"><span className="privacy-note"><span className="lock-dot">✦</span> Your idea stays private</span><button disabled={mutation.isPending} className="button button-dark">{mutation.isPending ? <Spinner label="Analyzing your idea..." /> : <>Analyze my idea <Icon name="arrow" size={16} /></>}</button></div><ErrorMessage error={mutation.error} onRetry={() => mutation.mutate(mutation.variables)} /></form></div>;
+  return <div className="flow-container"><StepHeader eyebrow="Start with a thought" title={<>What are you <em>building?</em></>} subtitle="Describe the idea in your own words. Prompt Architect will help you find the shape inside it." /><form onSubmit={submit} className="prompt-form"><div className="textarea-wrap"><label className="sr-only" htmlFor="raw-input">Describe your idea</label>{!rawInput ? <span className="rotating-placeholder" aria-hidden="true">{placeholderText}</span> : null}<textarea ref={inputRef} id="raw-input" className={inputInvalid ? "input-invalid" : ""} aria-invalid={inputInvalid} value={rawInput} onChange={(event) => { const nextValue = event.target.value; setRawInput(nextValue); if (nextValue.trim().length >= 10 && nextValue.trim().length <= maxInputLength) { setInputInvalid(false); setValidationError(""); } }} rows={7} placeholder="" autoFocus /><div className="composer-controls"><div ref={targetRef} className="target-menu"><button type="button" className="target-picker" onClick={() => setTargetOpen((open) => !open)} aria-expanded={targetOpen} aria-haspopup="listbox"><span>Prompt target:</span><strong>{selectedCategory[1]}</strong><Icon name="chevron" size={15} /></button>{targetOpen ? <div className="target-popover" role="listbox" aria-label="Prompt target options">{categories.map(([value, label, description]) => <button type="button" role="option" aria-selected={category === value} key={value} className={category === value ? "target-option selected" : "target-option"} onClick={() => { setCategory(value); setTargetOpen(false); }}><span className="target-option-copy"><strong>{label}</strong><small>{description}</small></span>{category === value ? <Icon name="check" size={17} /> : null}</button>)}</div> : null}</div><span className={inputInvalid ? "textarea-count count-invalid" : "textarea-count"}>{rawInput.length}/{maxInputLength}</span></div></div>{validationError ? <p className="field-error" role="alert">{validationError}</p> : null}<div className="form-footer"><span className="privacy-note"><span className="lock-dot">✦</span> Your idea stays private</span><button disabled={mutation.isPending} className="button button-dark">{mutation.isPending ? <Spinner label="Analyzing your idea..." /> : <>Analyze my idea <Icon name="arrow" size={16} /></>}</button></div><ErrorMessage error={mutation.error} onRetry={() => mutation.mutate(mutation.variables)} /></form></div>;
 }
 
 function QuestionsScreen({ session, onDone, onBack }) {
   const [answer, setAnswer] = useState("");
-  const [historyOpen, setHistoryOpen] = useState(false);
   useEffect(() => {
     setAnswer("");
   }, [session.current_question]);
@@ -275,7 +335,6 @@ function QuestionsScreen({ session, onDone, onBack }) {
     onSuccess: onDone,
   });
   const isPending = answerMutation.isPending || assumptionsMutation.isPending;
-  const history = session.specification.answers || [];
   const submitAnswer = (event, skipped = false) => {
     event?.preventDefault();
     answerMutation.mutate(skipped ? { skipped: true } : { answer: answer.trim() });
@@ -284,31 +343,17 @@ function QuestionsScreen({ session, onDone, onBack }) {
     <div className="flow-container narrow-flow">
       <WizardProgress current={1} />
       <StepHeader
-        eyebrow="A little more context"
         title="Help us get it right."
-        subtitle={`We’ll ask up to ${session.question_limit} focused questions to understand your intent. Answer what you can, skip anything undecided, or let us make assumptions for the rest.`}
+        subtitle={`We’ll ask up to ${session.question_limit} focused questions to understand your intent.`}
       />
-      {history.length ? (
-        <div className="question-history">
-          <button type="button" className="history-toggle" onClick={() => setHistoryOpen((open) => !open)} aria-expanded={historyOpen}>
-            <span>Previous answers <span className="history-count">{history.length}</span></span>
-            <Icon name="chevron" size={16} />
-          </button>
-          {historyOpen ? <div className="history-answers">{history.map((item, index) => <div key={`${item.question}-${index}`} className="history-answer"><span className="history-check">{item.skipped ? "—" : "✓"}</span><div><strong>{item.question}</strong><span>{item.skipped ? "Skipped for now" : item.answer}</span><small>{item.skipped ? "Unresolved" : "Confirmed by you"}</small></div></div>)}</div> : null}
-        </div>
-      ) : null}
       <form onSubmit={submitAnswer} className="question-list">
         <div className="question-card active-question">
-          <div className="question-meta"><span>Question {session.question_count + 1} of up to {session.question_limit}</span><span>{Math.round((session.question_count / session.question_limit) * 100)}% complete</span></div>
-          <div className="question-copy"><span className="question-number">{session.question_count + 1}.</span><strong id="question-label">{session.current_question}</strong><label className="sr-only" htmlFor="question-answer">Answer to the question</label><textarea id="question-answer" aria-labelledby="question-label" value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type your answer here..." rows={4} autoFocus /></div>
+          <div className="question-copy"><span className="question-number" aria-hidden="true">{String(session.question_count + 1).padStart(2, "0")}</span><strong id="question-label">{session.current_question}</strong><label className="sr-only" htmlFor="question-answer">Answer to the question</label><textarea id="question-answer" aria-labelledby="question-label" value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type your answer here..." rows={4} autoFocus /></div>
         </div>
         <div className="question-actions">
           <BackButton onClick={onBack} disabled={isPending} />
-          <div className="question-secondary-actions">
-            <button type="button" className="text-action" onClick={(event) => submitAnswer(event, true)} disabled={isPending}>Skip for now</button>
-            <button type="button" className="assumption-action" onClick={() => assumptionsMutation.mutate()} disabled={isPending}>Make assumptions</button>
-          </div>
-          <button disabled={isPending || !answer.trim()} className="button button-dark">{answerMutation.isPending ? <Spinner label="Saving..." /> : <>Continue <Icon name="arrow" size={16} /></>}</button>
+          <button type="button" className="assumption-action" onClick={() => assumptionsMutation.mutate()} disabled={isPending}>✦ Assume all</button>
+          <div className="question-secondary-actions"><button type="button" className="text-action" onClick={(event) => submitAnswer(event, true)} disabled={isPending}>Skip question</button><button disabled={isPending || !answer.trim()} className="button button-dark">{answerMutation.isPending ? <Spinner label="Saving..." /> : <>Continue <Icon name="arrow" size={16} /></>}</button></div>
         </div>
         <ErrorMessage error={answerMutation.error || assumptionsMutation.error} onRetry={() => (answerMutation.error ? answerMutation.mutate(answer.trim() ? { answer: answer.trim() } : { skipped: true }) : assumptionsMutation.mutate())} />
       </form>
@@ -329,7 +374,7 @@ function ReviewScreen({ session, onDone, onBack, onReset, generationMutation }) 
   const mutation = useMutation({ mutationFn: () => request(`/api/sessions/${session.id}/spec/`, { method: "PATCH", body: JSON.stringify(spec) }), onSuccess: onDone });
   const updateList = (field, index, value) => setSpec((current) => ({ ...current, [field]: current[field].map((item, i) => i === index ? value : item), ...(field === "assumptions" ? { assumption_provenance: (current.assumption_provenance || []).map((item, i) => i === index ? { ...item, text: value } : item) } : {}) }));
   const removeListItem = (field, index) => setSpec((current) => ({ ...current, [field]: current[field].filter((_, i) => i !== index), ...(field === "assumptions" ? { assumption_provenance: (current.assumption_provenance || []).filter((_, i) => i !== index) } : {}) }));
-  return <div className="flow-container review-flow"><WizardProgress current={3} /><StepHeader eyebrow="Final check" title="Make it yours." subtitle="Review the direction below. You have the final say before we write your prompt." /><form onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }} className="review-form"><section className="review-goal"><span className="field-heading">Goal</span><p className="goal-value">{spec.goal}</p></section><div className="review-section-label">AI interpretation <span>Editable structure inferred from your idea and answers</span></div><div className="spec-grid">{listFields.map((field) => <fieldset key={field} className="spec-card"><div className="spec-card-heading"><span>{field === "assumptions" ? "Assumptions to review" : field}</span>{field === "assumptions" ? <span className="provenance-badge">AI-generated</span> : null}<span className="spec-count">{spec[field].length}</span></div>{spec[field].length ? spec[field].map((item, index) => <div key={`${field}-${index}`} className="spec-item"><div className="spec-item-content"><input className={item === "" ? "new-spec-input" : ""} value={item} placeholder="Add an item..." onChange={(event) => updateList(field, index, event.target.value)} />{field === "assumptions" ? <span className="item-provenance">{spec.assumption_provenance?.[index]?.source === "ai_analysis" ? "From initial analysis" : spec.assumption_provenance?.[index]?.source === "user_added" ? "Added by you" : "Added after clarification"}</span> : null}</div><button type="button" onClick={() => removeListItem(field, index)} aria-label={`Remove ${field} item`}>×</button></div>) : <p className="spec-empty">No {field} specified yet.</p>}<button type="button" onClick={() => setSpec({ ...spec, [field]: [...spec[field], ""], assumption_provenance: field === "assumptions" ? [...(spec.assumption_provenance || []), { text: "", source: "user_added" }] : spec.assumption_provenance })} className="add-item"><Icon name="plus" size={14} /> Add item</button></fieldset>)}</div><fieldset className="answers-card confirmed-card"><button type="button" className="confirmed-heading" onClick={() => setConfirmedOpen((open) => !open)} aria-expanded={confirmedOpen}><span><strong>Confirmed decisions</strong><small>{spec.answers.filter((item) => item.answer?.trim()).length} confirmed · {spec.answers.filter((item) => item.skipped).length} skipped</small></span><Icon name="chevron" size={16} /></button>{confirmedOpen ? <div className="confirmed-list">{spec.answers.length ? spec.answers.map((item, index) => <div key={item.question} className="answer-row"><div><strong>{item.question}</strong><span className={item.skipped ? "answer-provenance skipped" : "answer-provenance"}>{item.skipped ? "Skipped — unresolved" : "Confirmed by you"}</span><input className="answer-input" value={item.answer || ""} onChange={(event) => setSpec({ ...spec, answers: spec.answers.map((answer, answerIndex) => answerIndex === index ? { ...answer, answer: event.target.value, skipped: false, provenance: "confirmed" } : answer) })} placeholder="Skipped — click to provide an answer" /></div></div>) : <p className="muted-copy">No clarification decisions yet.</p>}</div> : null}</fieldset><div className="form-footer"><div className="review-actions-left"><BackButton onClick={onBack} disabled={mutation.isPending || generationMutation.isPending} /><button type="button" className="review-start-over" onClick={onReset} disabled={mutation.isPending || generationMutation.isPending}>Start over</button></div><span className="privacy-note">You can edit everything except the original goal.</span><button disabled={mutation.isPending || generationMutation.isPending} className="button button-dark">{mutation.isPending ? <Spinner label="Saving..." /> : generationMutation.isPending ? <Spinner label="Writing your prompt..." /> : <>Generate prompt <Icon name="arrow" size={16} /> </>}</button></div><ErrorMessage error={mutation.error} onRetry={() => mutation.mutate()} /><ErrorMessage error={generationMutation.error} onRetry={() => generationMutation.mutate()} /></form></div>;
+  return <div className="flow-container review-flow"><WizardProgress current={3} /><StepHeader eyebrow="Final check" title="Make it yours." subtitle="Review the direction below. You have the final say before we write your prompt." /><form onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }} className="review-form"><section className="review-goal"><span className="field-heading">Goal</span><p className="goal-value">{spec.goal}</p></section><div className="review-section-label">AI interpretation <span>Editable structure inferred from your idea and answers</span></div><div className="spec-grid">{listFields.map((field) => <fieldset key={field} className="spec-card"><div className="spec-card-heading"><span>{field === "assumptions" ? "Assumptions to review" : field}</span>{field === "assumptions" ? <span className="provenance-badge">AI-generated</span> : null}<span className="spec-count">{spec[field].length}</span></div>{spec[field].length ? spec[field].map((item, index) => <div key={`${field}-${index}`} className="spec-item"><div className="spec-item-content"><input className={item === "" ? "new-spec-input" : ""} value={item} placeholder="Add an item..." onChange={(event) => updateList(field, index, event.target.value)} />{field === "assumptions" ? <span className="item-provenance">{spec.assumption_provenance?.[index]?.source === "ai_analysis" ? "From initial analysis" : spec.assumption_provenance?.[index]?.source === "user_added" ? "Added by you" : "Added after clarification"}</span> : null}</div><button type="button" onClick={() => removeListItem(field, index)} aria-label={`Remove ${field} item`}>×</button></div>) : <p className="spec-empty">No {field} specified yet.</p>}<button type="button" onClick={() => setSpec({ ...spec, [field]: [...spec[field], ""], assumption_provenance: field === "assumptions" ? [...(spec.assumption_provenance || []), { text: "", source: "user_added" }] : spec.assumption_provenance })} className="add-item"><Icon name="plus" size={14} /> Add item</button></fieldset>)}</div><fieldset className="answers-card confirmed-card"><button type="button" className="confirmed-heading" onClick={() => setConfirmedOpen((open) => !open)} aria-expanded={confirmedOpen}><span><strong>Clarification decisions</strong><small>{spec.answers.filter((item) => item.answer?.trim()).length} confirmed · {spec.answers.filter((item) => item.skipped).length} assumed</small></span><Icon name="chevron" size={16} /></button>{confirmedOpen ? <div className="confirmed-list">{spec.answers.length ? spec.answers.map((item, index) => <div key={item.question} className="answer-row"><div><strong>{item.question}</strong><span className={item.skipped ? "answer-provenance skipped" : "answer-provenance"}>{item.skipped ? "Assumption made by Prompt Architect" : "Confirmed by you"}</span><input className="answer-input" value={item.answer || ""} onChange={(event) => setSpec({ ...spec, answers: spec.answers.map((answer, answerIndex) => answerIndex === index ? { ...answer, answer: event.target.value, skipped: false, provenance: "confirmed" } : answer) })} placeholder="Assumption made — click to provide an answer" /></div></div>) : <p className="muted-copy">No clarification decisions yet.</p>}</div> : null}</fieldset><div className="form-footer"><div className="review-actions-left"><BackButton onClick={onBack} disabled={mutation.isPending || generationMutation.isPending} /><button type="button" className="review-start-over" onClick={onReset} disabled={mutation.isPending || generationMutation.isPending}>Start over</button></div><span className="privacy-note">You can edit everything except the original goal.</span><button disabled={mutation.isPending || generationMutation.isPending} className="button button-dark">{mutation.isPending ? <Spinner label="Saving..." /> : generationMutation.isPending ? <Spinner label="Writing your prompt..." /> : <>Generate prompt <Icon name="arrow" size={16} /> </>}</button></div><ErrorMessage error={mutation.error} onRetry={() => mutation.mutate()} /><ErrorMessage error={generationMutation.error} onRetry={() => generationMutation.mutate()} /></form></div>;
 }
 
 function ResultScreen({ session, onBack, onReset }) {

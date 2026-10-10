@@ -136,7 +136,7 @@ class AdaptiveClarificationTests(TestCase):
         self.assertEqual(self.session.specification.answers[0]["answer"], "Small business owners")
 
     @patch("sessions.views.GeminiClient")
-    def test_skipped_answer_is_unresolved_and_does_not_become_confirmed(self, client_class):
+    def test_skipped_answer_becomes_an_ai_assumption(self, client_class):
         client_class.return_value.next_question.return_value = ClarificationQuestion(
             question="What is the visual style?"
         )
@@ -150,7 +150,7 @@ class AdaptiveClarificationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         answer = response.data["specification"]["answers"][0]
         self.assertTrue(answer["skipped"])
-        self.assertEqual(answer["provenance"], "skipped")
+        self.assertEqual(answer["provenance"], "ai_assumption")
         self.assertEqual(answer["answer"], "")
 
     @patch("sessions.views.GeminiClient")

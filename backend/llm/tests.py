@@ -17,9 +17,9 @@ class DecisionIntegrityTemplateTests(TestCase):
         self.assertIn("do not choose Stripe", ANALYSIS_TEMPLATE)
         self.assertIn("explicit deferral or exclusion", ANALYSIS_TEMPLATE)
 
-    def test_assumption_prompt_prioritizes_confirmed_and_skipped_answers(self):
+    def test_assumption_prompt_prioritizes_confirmed_and_assumed_answers(self):
         self.assertIn("provenance `confirmed`", ASSUMPTIONS_TEMPLATE)
-        self.assertIn("Answers marked `skipped`", ASSUMPTIONS_TEMPLATE)
+        self.assertIn("Answers marked `ai_assumption`", ASSUMPTIONS_TEMPLATE)
         self.assertIn("choose a payment provider", ASSUMPTIONS_TEMPLATE)
 
     def test_generation_prompt_preserves_all_four_decision_categories(self):
@@ -27,7 +27,7 @@ class DecisionIntegrityTemplateTests(TestCase):
             "payment provider",
             "deployment model",
             "authentication and stack choices",
-            "`skipped` answers are unresolved",
+            "`ai_assumption` answers are provisional",
         ):
             self.assertIn(phrase, GENERATION_TEMPLATE)
 

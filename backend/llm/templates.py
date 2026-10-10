@@ -109,9 +109,9 @@ Precedence:
 5. Unknowns only when a decision cannot be safely assumed.
 
 Answers with provenance `confirmed` are user decisions and must be reflected
-in the resulting confirmed specification. Answers marked `skipped` are not
-confirmed requirements. Use them to understand what remains unresolved, but
-do not invent an answer that conflicts with an explicit deferral. Never
+in the resulting confirmed specification. Answers marked `ai_assumption` are
+questions the user asked Prompt Architect to answer; resolve them with a
+bounded assumption rather than treating them as unresolved. Never
 choose a payment provider, hosting provider,
 deployment model, or other vendor-specific technology unless the user
 confirmed it or it already exists as an assumption in the specification.
@@ -166,7 +166,8 @@ from the original raw input that is absent from the specification.
 Interpret clarification history using its provenance:
 - `confirmed` answers are explicit user decisions and may inform confirmed
   requirements, preferences, or constraints.
-- `skipped` answers are unresolved and must never be presented as confirmed.
+- `ai_assumption` answers are provisional and must remain visibly labeled as
+  assumptions in the final prompt.
 - Items under `assumptions` are provisional AI decisions and must remain
   visibly labeled as assumptions in the final prompt.
 - `assumption_provenance` identifies whether an assumption came from initial

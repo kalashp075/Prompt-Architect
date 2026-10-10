@@ -292,7 +292,7 @@ class QuestionAnswerView(APIView):
                 "question": question,
                 "answer": answer,
                 "skipped": skipped,
-                "provenance": "skipped" if skipped else "confirmed",
+                "provenance": "ai_assumption" if skipped else "confirmed",
             })
             session.specification.answers = history
             session.specification.save(update_fields=["answers"])
@@ -354,7 +354,11 @@ class AssumptionsView(APIView):
             denied = require_session_access(request, session)
             if denied:
                 return denied
-            if session.status != PromptSession.Status.AWAITING_ANSWERS:
+            can_retry_failed_assumptions = (
+                session.status == PromptSession.Status.ERROR
+                and session.assumptions_requested
+            )
+            if session.status != PromptSession.Status.AWAITING_ANSWERS and not can_retry_failed_assumptions:
                 return Response(
                     {"error": {"message": "This session is not collecting clarification answers."}},
                     status=409,
@@ -373,7 +377,7 @@ class AssumptionsView(APIView):
                 history_data(session),
             )
         except LLMError as exc:
-            session.status = PromptSession.Status.ERROR
+            session.status = PromptSession.Status.AWAITING_ANSWERS
             session.processing_started_at = None
             session.save(update_fields=["status", "processing_started_at", "updated_at"])
             return error_response(exc)

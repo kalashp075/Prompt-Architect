@@ -190,14 +190,21 @@ class GeminiClient:
             spec=json.dumps(spec, ensure_ascii=False),
             history=json.dumps(history, ensure_ascii=False),
         )
-        try:
-            return UpdatedAnalysisSpec.model_validate(
-                json.loads(self._generate(prompt, schema=UpdatedAnalysisSpec))
-            )
-        except (json.JSONDecodeError, ValidationError, TypeError) as exc:
-            raise LLMError(
-                "Something went wrong filling in the remaining assumptions — please try again."
-            ) from exc
+        for attempt in range(2):
+            try:
+                text = self._generate(
+                    prompt + (
+                        "\nReturn only valid JSON matching every required field and type."
+                        if attempt else ""
+                    ),
+                    schema=UpdatedAnalysisSpec,
+                )
+                return UpdatedAnalysisSpec.model_validate(json.loads(text))
+            except (json.JSONDecodeError, ValidationError, TypeError) as exc:
+                if attempt == 1:
+                    raise LLMError(
+                        "Something went wrong filling in the remaining assumptions — please try again."
+                    ) from exc
 
     def generate(self, spec, target_category):
         prompt = GENERATION_TEMPLATE.format(
